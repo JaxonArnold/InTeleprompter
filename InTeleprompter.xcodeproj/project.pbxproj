@@ -6,20 +6,56 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		04126EEB2FDB98B300455737 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 040390672FDB2D3A009B32E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0403906E2FDB2D3A009B32E5;
+			remoteInfo = InTeleprompter;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		0403906F2FDB2D3A009B32E5 /* InTeleprompter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InTeleprompter.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InTeleprompterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0403908C2FDB3591009B32E5 /* Exceptions for "InTeleprompter" folder in "InTeleprompter" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 0403906E2FDB2D3A009B32E5 /* InTeleprompter */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		040390712FDB2D3A009B32E5 /* InTeleprompter */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0403908C2FDB3591009B32E5 /* Exceptions for "InTeleprompter" folder in "InTeleprompter" target */,
+			);
 			path = InTeleprompter;
+			sourceTree = "<group>";
+		};
+		04126EE82FDB98B300455737 /* InTeleprompterTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = InTeleprompterTests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		0403906C2FDB2D3A009B32E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		04126EE42FDB98B300455737 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				040390712FDB2D3A009B32E5 /* InTeleprompter */,
+				04126EE82FDB98B300455737 /* InTeleprompterTests */,
 				040390702FDB2D3A009B32E5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				0403906F2FDB2D3A009B32E5 /* InTeleprompter.app */,
+				04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,6 +108,29 @@
 			productReference = 0403906F2FDB2D3A009B32E5 /* InTeleprompter.app */;
 			productType = "com.apple.product-type.application";
 		};
+		04126EE62FDB98B300455737 /* InTeleprompterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 04126EED2FDB98B300455737 /* Build configuration list for PBXNativeTarget "InTeleprompterTests" */;
+			buildPhases = (
+				04126EE32FDB98B300455737 /* Sources */,
+				04126EE42FDB98B300455737 /* Frameworks */,
+				04126EE52FDB98B300455737 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				04126EEC2FDB98B300455737 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				04126EE82FDB98B300455737 /* InTeleprompterTests */,
+			);
+			name = InTeleprompterTests;
+			packageProductDependencies = (
+			);
+			productName = InTeleprompterTests;
+			productReference = 04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -82,6 +143,10 @@
 				TargetAttributes = {
 					0403906E2FDB2D3A009B32E5 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					04126EE62FDB98B300455737 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 0403906E2FDB2D3A009B32E5;
 					};
 				};
 			};
@@ -100,12 +165,20 @@
 			projectRoot = "";
 			targets = (
 				0403906E2FDB2D3A009B32E5 /* InTeleprompter */,
+				04126EE62FDB98B300455737 /* InTeleprompterTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		0403906D2FDB2D3A009B32E5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		04126EE52FDB98B300455737 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -122,7 +195,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		04126EE32FDB98B300455737 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		04126EEC2FDB98B300455737 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0403906E2FDB2D3A009B32E5 /* InTeleprompter */;
+			targetProxy = 04126EEB2FDB98B300455737 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		040390782FDB2D3B009B32E5 /* Debug */ = {
@@ -256,11 +344,19 @@
 				DEVELOPMENT_TEAM = W826XVM526;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InTeleprompter/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = InTeleprompter;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
+				INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to record your teleprompter takes.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We use the microphone to record audio with your video.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Finished recordings are saved to your Photos library.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice and scroll as you read.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -288,11 +384,19 @@
 				DEVELOPMENT_TEAM = W826XVM526;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InTeleprompter/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = InTeleprompter;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.video";
+				INFOPLIST_KEY_NSCameraUsageDescription = "We use the camera to record your teleprompter takes.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We use the microphone to record audio with your video.";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Finished recordings are saved to your Photos library.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice and scroll as you read.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -307,6 +411,48 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		04126EEE2FDB98B300455737 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W826XVM526;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jack.InTeleprompterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InTeleprompter.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/InTeleprompter";
+			};
+			name = Debug;
+		};
+		04126EEF2FDB98B300455737 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W826XVM526;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jack.InTeleprompterTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/InTeleprompter.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/InTeleprompter";
 			};
 			name = Release;
 		};
@@ -327,6 +473,15 @@
 			buildConfigurations = (
 				0403907B2FDB2D3B009B32E5 /* Debug */,
 				0403907C2FDB2D3B009B32E5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		04126EED2FDB98B300455737 /* Build configuration list for PBXNativeTarget "InTeleprompterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				04126EEE2FDB98B300455737 /* Debug */,
+				04126EEF2FDB98B300455737 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

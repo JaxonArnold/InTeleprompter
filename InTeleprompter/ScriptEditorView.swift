@@ -5,6 +5,7 @@ struct ScriptEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft: Script
+    @State private var pendingUpdate: Task<Void, Never>?
     @Binding var presentingScript: Script?
     @FocusState private var bodyFocused: Bool
 
@@ -59,7 +60,18 @@ struct ScriptEditorView: View {
             }
         }
         .onChange(of: draft) { _, newValue in
-            store.update(newValue)
+            // Debounced: pushing the store on every keystroke re-renders the
+            // list behind this screen (word counts and all) per character.
+            pendingUpdate?.cancel()
+            pendingUpdate = Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                store.update(newValue)
+            }
+        }
+        .onDisappear {
+            pendingUpdate?.cancel()
+            store.update(draft)
         }
     }
 

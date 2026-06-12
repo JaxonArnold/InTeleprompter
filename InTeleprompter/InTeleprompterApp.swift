@@ -9,9 +9,16 @@ import SwiftUI
 
 @main
 struct InTeleprompterApp: App {
+    @StateObject private var store = ScriptStore()
+
+    init() {
+        CameraManager.purgeStaleTakes()
+    }
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ScriptListView()
+                .environmentObject(store)
         }
     }
 }
