@@ -1,8 +1,8 @@
 # InTeleprompter
 
-An iOS teleprompter that records you while you read — and follows your voice.
+An iOS teleprompter that records you while you read and follows your voice.
 
-Point the front camera at yourself, present a script over the live preview, and record in up to 4K60 HEVC. With voice tracking enabled, the script scrolls as you speak: it keeps pace with your reading, pauses when you stop or ad-lib, and picks back up when you return to the script — no fixed scroll speed to fight.
+Point the front camera at yourself, present a script over the live preview, and record in up to 4K60 HEVC. With voice tracking enabled, the script scrolls as you speak: it keeps pace with your reading, pauses when you stop or ad-lib, and picks back up when you return to the script with no fixed scroll speed to fight.
 
 ## Features
 
@@ -26,7 +26,7 @@ Point the front camera at yourself, present a script over the live preview, and 
 
 ## Voice tracking, briefly
 
-Live transcription is fuzzy-matched against the script within a sliding window around the current position. Single words can only advance the position a few steps; larger jumps require consecutive-word evidence, so ad-libbing doesn't yank the script around. When you go quiet and come back — at the same spot, a few words earlier, or somewhere ahead — the matcher re-anchors within a word or two. A watchdog restarts the recognition task if it stalls during long sessions.
+Live transcription is fuzzy-matched against the script within a sliding window around the current position. Single words can only advance the position a few steps; larger jumps require consecutive-word evidence, so ad-libbing doesn't yank the script around. When you go quiet and come back, at the same spot, a few words earlier, or somewhere ahead, the matcher re-anchors within a word or two. A watchdog restarts the recognition task if it stalls during long sessions.
 
 Speech recognition runs on-device whenever the language supports it. The app makes no network calls of its own.
 
@@ -51,6 +51,3 @@ Open `InTeleprompter.xcodeproj`, select your team for signing, and run on a devi
 | Speech recognition | Following your voice through the script |
 | Photos (add only) | Saving finished takes |
 
-## License
-
-No license has been chosen yet. If you're reading this on GitHub and want to use the code, open an issue.
