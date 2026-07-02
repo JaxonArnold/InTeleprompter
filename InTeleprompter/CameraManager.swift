@@ -75,14 +75,24 @@ final class CameraManager: NSObject, ObservableObject {
     /// Files whose Photos hand-off is still in flight (main-thread only) —
     /// they must not be deleted until the save completes.
     private var pendingSaveURLs: Set<URL> = []
+    /// Monotonic take counter (main-thread only). A late publish from an
+    /// earlier take can't resurrect itself once a newer take has started.
+    private var takeSequence = 0
+    /// A start was requested but the first frame hasn't landed yet
+    /// (main-thread only). Blocks overlapping starts — a second writer
+    /// would silently no-op while startRecording() reported success — and
+    /// lets interruption handlers clean up a take that never got rolling.
+    private(set) var isPreparingToRecord = false
 
     // MARK: - Capture objects
 
     let session = AVCaptureSession()
     private let sessionQueue = DispatchQueue(label: "teleprompter.session.queue")
     private let outputQueue = DispatchQueue(label: "teleprompter.output.queue")
-    private let videoOutput = AVCaptureVideoDataOutput()
-    private let audioOutput = AVCaptureAudioDataOutput()
+    // nonisolated: the sample-buffer delegate (nonisolated, on outputQueue)
+    // compares against these to route buffers.
+    nonisolated let videoOutput = AVCaptureVideoDataOutput()
+    nonisolated let audioOutput = AVCaptureAudioDataOutput()
     private var videoDeviceInput: AVCaptureDeviceInput?
     private var audioDeviceInput: AVCaptureDeviceInput?
     private var durationTimer: Timer?
@@ -90,16 +100,19 @@ final class CameraManager: NSObject, ObservableObject {
     /// camera in any interface orientation.
     private var captureRotationCoordinator: AVCaptureDevice.RotationCoordinator?
 
-    // MARK: - Writer state (touched only on outputQueue)
+    // MARK: - Writer state (touched only on outputQueue — nonisolated(unsafe)
+    // makes the queue confinement explicit under MainActor default isolation;
+    // outputQueue provides the synchronization, checked by dispatchPrecondition)
 
-    private var assetWriter: AVAssetWriter?
-    private var writerVideoInput: AVAssetWriterInput?
-    private var writerAudioInput: AVAssetWriterInput?
-    private var writerSessionStarted = false
+    nonisolated(unsafe) private var assetWriter: AVAssetWriter?
+    nonisolated(unsafe) private var writerVideoInput: AVAssetWriterInput?
+    nonisolated(unsafe) private var writerAudioInput: AVAssetWriterInput?
+    nonisolated(unsafe) private var writerSessionStarted = false
+    nonisolated(unsafe) private var writerTakeSequence = 0
 
     /// Live tap on microphone sample buffers; called on a background queue
     /// for every audio buffer, whether or not a recording is in progress.
-    private var audioSampleHandler: ((CMSampleBuffer) -> Void)?
+    nonisolated(unsafe) private var audioSampleHandler: ((CMSampleBuffer) -> Void)?
 
     func setAudioSampleHandler(_ handler: ((CMSampleBuffer) -> Void)?) {
         outputQueue.async { [weak self] in
@@ -145,6 +158,7 @@ final class CameraManager: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.session.isRunning { self.session.stopRunning() }
+            DispatchQueue.main.async { self.isSessionRunning = false }
         }
     }
 
@@ -161,6 +175,11 @@ final class CameraManager: NSObject, ObservableObject {
                 self.isInterrupted = true
                 if self.isRecording {
                     self.saveMessage = "Recording interrupted — saving your take"
+                }
+                // Also stop a take that was requested but never got its first
+                // frame — otherwise its writer waits forever for buffers an
+                // interrupted session will never deliver.
+                if self.isRecording || self.isPreparingToRecord {
                     self.stopRecording()
                 }
             },
@@ -173,6 +192,8 @@ final class CameraManager: NSObject, ObservableObject {
                 guard let self else { return }
                 if self.isRecording {
                     self.saveMessage = "Camera error — saving your take"
+                }
+                if self.isRecording || self.isPreparingToRecord {
                     self.stopRecording()
                 }
                 // The system can reset media services (e.g. after a long
@@ -187,8 +208,10 @@ final class CameraManager: NSObject, ObservableObject {
             },
             center.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                                object: nil, queue: .main) { [weak self] _ in
-                guard let self, self.isRecording else { return }
-                self.saveMessage = "Recording stopped in background — saving your take"
+                guard let self, self.isRecording || self.isPreparingToRecord else { return }
+                if self.isRecording {
+                    self.saveMessage = "Recording stopped in background — saving your take"
+                }
                 self.stopRecording()
             },
             center.addObserver(forName: ProcessInfo.thermalStateDidChangeNotification,
@@ -229,16 +252,58 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configureSession() {
         session.beginConfiguration()
-        defer { session.commitConfiguration() }
+        let configured = configureSessionContent()
+        session.commitConfiguration()
 
+        guard let (camera, resolutionLabel, quality) = configured else {
+            // No camera could be attached (simulator, hardware failure) —
+            // clear published state so the UI and the preview's rotation
+            // coordinator don't keep pointing at a device that is no longer
+            // in the session.
+            DispatchQueue.main.async {
+                self.activeVideoDevice = nil
+                self.qualityLabel = ""
+            }
+            return
+        }
+
+        let fpsLabel = applyCaptureTweaks(camera: camera, quality: quality)
+        DispatchQueue.main.async { self.qualityLabel = resolutionLabel + fpsLabel }
+
+        // A different physical camera (flip, or first configure) starts from
+        // automatic center-weighted focus/exposure, and any exposure bias the
+        // user dialed in is re-applied against the new device's range.
+        if camera !== configuredDevice {
+            configuredDevice = camera
+            resetFocusAndExposure(on: camera)
+            let clamped = min(max(appliedExposureBias, camera.minExposureTargetBias),
+                              camera.maxExposureTargetBias)
+            if clamped != 0 {
+                updateDevice(camera) { camera.setExposureTargetBias(clamped) }
+            }
+            DispatchQueue.main.async {
+                self.focusState = .automatic
+                self.exposureBias = clamped
+                self.exposureBiasRange = camera.minExposureTargetBias...camera.maxExposureTargetBias
+            }
+        }
+    }
+
+    /// Removes and re-adds all inputs/outputs and picks the preset. Runs on
+    /// sessionQueue between beginConfiguration() and commitConfiguration().
+    /// Returns nil when no camera could be attached.
+    private func configureSessionContent() -> (camera: AVCaptureDevice, resolutionLabel: String, quality: RecordingQuality)? {
         // Clean slate (also used when flipping cameras).
         session.inputs.forEach(session.removeInput)
         session.outputs.forEach(session.removeOutput)
+        videoDeviceInput = nil
+        audioDeviceInput = nil
+        captureRotationCoordinator = nil
 
         // -- Video input: prefer the best physical camera available.
         guard let camera = bestCamera(for: cameraPosition),
               let videoInput = try? AVCaptureDeviceInput(device: camera),
-              session.canAddInput(videoInput) else { return }
+              session.canAddInput(videoInput) else { return nil }
         session.addInput(videoInput)
         videoDeviceInput = videoInput
         captureRotationCoordinator = AVCaptureDevice.RotationCoordinator(device: camera, previewLayer: nil)
@@ -272,29 +337,6 @@ final class CameraManager: NSObject, ObservableObject {
             break
         }
 
-        // -- Apply the requested frame rate if the active format allows it.
-        var fpsLabel = ""
-        if camera.activeFormat.videoSupportedFrameRateRanges
-            .contains(where: { $0.maxFrameRate >= Double(quality.fps) }) {
-            do {
-                try camera.lockForConfiguration()
-                let duration = CMTime(value: 1, timescale: CMTimeScale(quality.fps))
-                camera.activeVideoMinFrameDuration = duration
-                camera.activeVideoMaxFrameDuration = duration
-                camera.unlockForConfiguration()
-                fpsLabel = " · \(quality.fps)fps"
-            } catch {
-                // Keep the format's default frame rate.
-            }
-        }
-
-        // Smooth exposure/focus changes look better on video.
-        if (try? camera.lockForConfiguration()) != nil {
-            if camera.isSmoothAutoFocusSupported { camera.isSmoothAutoFocusEnabled = true }
-            if camera.isLowLightBoostSupported { camera.automaticallyEnablesLowLightBoostWhenAvailable = true }
-            camera.unlockForConfiguration()
-        }
-
         // -- Data outputs feeding the asset writer and the live audio tap.
         // Late frames must be discarded: the camera has a small fixed buffer
         // pool, and if downstream (HEVC encode + writer) falls behind, holding
@@ -302,7 +344,7 @@ final class CameraManager: NSObject, ObservableObject {
         // A dropped frame in the file is the better failure.
         videoOutput.alwaysDiscardsLateVideoFrames = true
         videoOutput.setSampleBufferDelegate(self, queue: outputQueue)
-        guard session.canAddOutput(videoOutput) else { return }
+        guard session.canAddOutput(videoOutput) else { return nil }
         session.addOutput(videoOutput)
 
         audioOutput.setSampleBufferDelegate(self, queue: outputQueue)
@@ -317,7 +359,31 @@ final class CameraManager: NSObject, ObservableObject {
             session.addOutput(audioOutput)
         }
 
-        DispatchQueue.main.async { self.qualityLabel = resolutionLabel + fpsLabel }
+        return (camera, resolutionLabel, quality)
+    }
+
+    /// Frame-rate lock and smooth AF / low-light tweaks. Runs after commit,
+    /// so activeFormat reflects the newly committed preset — checking before
+    /// commit tests the previous preset's format, which can silently miss a
+    /// 60 fps lock on capable hardware (or apply one the new format clamps).
+    private func applyCaptureTweaks(camera: AVCaptureDevice, quality: RecordingQuality) -> String {
+        guard (try? camera.lockForConfiguration()) != nil else { return "" }
+        defer { camera.unlockForConfiguration() }
+
+        var fpsLabel = ""
+        if camera.activeFormat.videoSupportedFrameRateRanges
+            .contains(where: { $0.maxFrameRate >= Double(quality.fps) }) {
+            let duration = CMTime(value: 1, timescale: CMTimeScale(quality.fps))
+            camera.activeVideoMinFrameDuration = duration
+            camera.activeVideoMaxFrameDuration = duration
+            fpsLabel = " · \(quality.fps)fps"
+        }
+
+        // Smooth exposure/focus changes look better on video.
+        if camera.isSmoothAutoFocusSupported { camera.isSmoothAutoFocusEnabled = true }
+        if camera.isLowLightBoostSupported { camera.automaticallyEnablesLowLightBoostWhenAvailable = true }
+
+        return fpsLabel
     }
 
     /// Picks the most capable camera at the given position.
@@ -332,6 +398,109 @@ final class CameraManager: NSObject, ObservableObject {
             position: position
         )
         return discovery.devices.first
+    }
+
+    // MARK: - Focus & exposure control
+
+    /// Metering/focusing mode, published for the focus indicator and the
+    /// exposure slider's enabled state.
+    enum FocusState: Equatable {
+        case automatic         // continuous, center-weighted (default)
+        case pointOfInterest   // continuous AF/AE at the tapped point
+        case locked            // hard AE/AF lock (long-press)
+    }
+    @Published private(set) var focusState: FocusState = .automatic
+    /// Exposure compensation in EV, clamped to the active device's range.
+    @Published private(set) var exposureBias: Float = 0
+    @Published private(set) var exposureBiasRange: ClosedRange<Float> = -3...3
+
+    // MARK: Focus/exposure state (touched only on sessionQueue)
+
+    /// The device the session is currently configured with.
+    nonisolated(unsafe) private var configuredDevice: AVCaptureDevice?
+    /// Bias as applied to the hardware (mirrored to exposureBias for the UI).
+    nonisolated(unsafe) private var appliedExposureBias: Float = 0
+
+    /// Tap-to-focus: focus and meter at a point (device coordinates, 0–1),
+    /// continuously — the tapped subject stays metered as the shot changes.
+    func setPointOfInterest(_ point: CGPoint) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoDeviceInput?.device else { return }
+            self.updateDevice(device) {
+                if device.isFocusPointOfInterestSupported {
+                    device.focusPointOfInterest = point
+                    device.focusMode = .continuousAutoFocus
+                }
+                if device.isExposurePointOfInterestSupported {
+                    device.exposurePointOfInterest = point
+                    device.exposureMode = .continuousAutoExposure
+                }
+            }
+            DispatchQueue.main.async { self.focusState = .pointOfInterest }
+        }
+    }
+
+    /// Long-press: hard-lock focus and exposure at a point — nothing hunts,
+    /// no matter what moves through the frame.
+    func lockFocusAndExposure(at point: CGPoint) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoDeviceInput?.device else { return }
+            self.updateDevice(device) {
+                if device.isFocusPointOfInterestSupported {
+                    device.focusPointOfInterest = point
+                }
+                if device.isExposurePointOfInterestSupported {
+                    device.exposurePointOfInterest = point
+                }
+                if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
+                if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+            }
+            DispatchQueue.main.async { self.focusState = .locked }
+        }
+    }
+
+    /// Back to center-weighted continuous everything (lock-badge tap,
+    /// camera flip).
+    func resetFocusAndExposure() {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoDeviceInput?.device else { return }
+            self.resetFocusAndExposure(on: device)
+            DispatchQueue.main.async { self.focusState = .automatic }
+        }
+    }
+
+    /// Exposure compensation in EV. Values outside the active device's
+    /// range are clamped, and the clamped value is published back.
+    func setExposureBias(_ bias: Float) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.videoDeviceInput?.device else { return }
+            let clamped = min(max(bias, device.minExposureTargetBias), device.maxExposureTargetBias)
+            self.appliedExposureBias = clamped
+            self.updateDevice(device) { device.setExposureTargetBias(clamped) }
+            DispatchQueue.main.async {
+                self.exposureBias = clamped
+                self.exposureBiasRange = device.minExposureTargetBias...device.maxExposureTargetBias
+            }
+        }
+    }
+
+    /// Runs on sessionQueue.
+    private func resetFocusAndExposure(on device: AVCaptureDevice) {
+        updateDevice(device) {
+            let center = CGPoint(x: 0.5, y: 0.5)
+            if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = center }
+            if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+            if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = center }
+            if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
+        }
+    }
+
+    /// Locks the device for a configuration change; no-ops when unavailable.
+    /// Runs on sessionQueue.
+    private func updateDevice(_ device: AVCaptureDevice, _ changes: () -> Void) {
+        guard (try? device.lockForConfiguration()) != nil else { return }
+        changes()
+        device.unlockForConfiguration()
     }
 
     // MARK: - Controls
@@ -356,6 +525,15 @@ final class CameraManager: NSObject, ObservableObject {
     /// Returns false when recording can't start (e.g. storage is full).
     @discardableResult
     func startRecording() -> Bool {
+        // A start is already in flight; a second writer would silently
+        // no-op on outputQueue while this method reported success.
+        guard !isPreparingToRecord else { return false }
+        // The session is interrupted (call, camera claimed elsewhere): the
+        // writer would sit forever waiting for a first frame that never comes.
+        guard !isInterrupted else {
+            saveMessage = "Camera is interrupted — try again in a moment."
+            return false
+        }
         let free = Self.freeDiskSpace()
         if free < Self.minimumSpaceToRecord {
             saveMessage = "Not enough free storage to record — free up space and try again."
@@ -365,6 +543,8 @@ final class CameraManager: NSObject, ObservableObject {
             let minutes = max(1, free / estimatedBytesPerMinute)
             saveMessage = "Storage is low — roughly \(minutes) min of recording left."
         }
+        takeSequence += 1
+        let sequence = takeSequence
         // The previous take's review copy is superseded by the new one. If
         // its Photos save is still in flight, the save's completion deletes
         // the file instead — removing it now would lose the take.
@@ -379,8 +559,14 @@ final class CameraManager: NSObject, ObservableObject {
         // Lock this take's orientation to how the phone is held right now;
         // rotating mid-take keeps the file at its starting orientation.
         let captureAngle = captureRotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        isPreparingToRecord = true
         outputQueue.async { [weak self] in
-            guard let self, self.assetWriter == nil else { return }
+            guard let self else { return }
+            dispatchPrecondition(condition: .onQueue(self.outputQueue))
+            guard self.assetWriter == nil else {
+                DispatchQueue.main.async { self.isPreparingToRecord = false }
+                return
+            }
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("take-" + UUID().uuidString)
                 .appendingPathExtension("mov")
@@ -412,9 +598,13 @@ final class CameraManager: NSObject, ObservableObject {
                 self.writerVideoInput = videoInput
                 self.writerAudioInput = audioInput
                 self.writerSessionStarted = false
+                self.writerTakeSequence = sequence
+                // isPreparingToRecord clears when the first frame starts the
+                // writer session (see captureOutput), or in stopRecording().
             } catch {
                 try? FileManager.default.removeItem(at: url)
                 DispatchQueue.main.async {
+                    self.isPreparingToRecord = false
                     self.saveMessage = "Recording failed: \(error.localizedDescription)"
                 }
             }
@@ -444,9 +634,11 @@ final class CameraManager: NSObject, ObservableObject {
                 finish()
                 return
             }
+            dispatchPrecondition(condition: .onQueue(self.outputQueue))
             let videoInput = self.writerVideoInput
             let audioInput = self.writerAudioInput
             let sessionStarted = self.writerSessionStarted
+            let sequence = self.writerTakeSequence
             self.assetWriter = nil
             self.writerVideoInput = nil
             self.writerAudioInput = nil
@@ -454,6 +646,7 @@ final class CameraManager: NSObject, ObservableObject {
 
             DispatchQueue.main.async {
                 self.isRecording = false
+                self.isPreparingToRecord = false
                 self.stopDurationTimer()
                 // Apply any deferred quality change (settings picker or a
                 // mid-take thermal cap) now that the take is finished.
@@ -473,14 +666,16 @@ final class CameraManager: NSObject, ObservableObject {
             audioInput?.markAsFinished()
             let outputURL = writer.outputURL
             DispatchQueue.main.async { self.pendingSaveURLs.insert(outputURL) }
-            writer.finishWriting { [weak self] in
-                guard let self else {
-                    finish()
-                    return
-                }
+            // Strong self, deliberately: these one-shot completions always
+            // run, and the save pipeline must outlive the CameraManager —
+            // the prompter (its owner) can be dismissed while the writer
+            // finalizes, and a weak reference here would silently drop
+            // the take.
+            writer.finishWriting {
                 if writer.status == .completed {
-                    self.publishTake(for: writer.outputURL)
-                    self.saveToPhotos(url: writer.outputURL, completion: finish)
+                    self.publishTake(for: writer.outputURL, sequence: sequence) {
+                        self.saveToPhotos(url: writer.outputURL, completion: finish)
+                    }
                 } else {
                     let reason = writer.error?.localizedDescription ?? "unknown error"
                     try? FileManager.default.removeItem(at: writer.outputURL)
@@ -522,10 +717,13 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Rough write rate at the current quality, for the low-space estimate.
     private var estimatedBytesPerMinute: Int64 {
-        if qualityLabel.hasPrefix("4K") {
-            return qualityLabel.contains("60") ? 450_000_000 : 250_000_000
+        if Self.isThermallyThrottled { return 80_000_000 }  // capped at 1080p30
+        switch RecordingQuality.preferred {
+        case .uhd60: return 450_000_000
+        case .uhd30: return 250_000_000
+        case .fhd60: return 130_000_000
+        case .fhd30: return 80_000_000
         }
-        return qualityLabel.contains("60") ? 130_000_000 : 80_000_000
     }
 
     private static func freeDiskSpace() -> Int64 {
@@ -554,10 +752,15 @@ final class CameraManager: NSObject, ObservableObject {
 
     // MARK: - Saving
 
-    /// Builds the review thumbnail/duration off the main thread, then
-    /// publishes the finished take.
-    private func publishTake(for url: URL) {
-        Task.detached(priority: .utility) { [weak self] in
+    /// Builds the review thumbnail/duration off the main thread, publishes
+    /// the finished take, then runs `completion` on the main thread. Strong
+    /// self so the publish survives the prompter being dismissed. The
+    /// sequence check keeps a slow publish from resurrecting an old take
+    /// after a newer recording has already started — and publishing strictly
+    /// before the Photos hand-off finishes keeps `finishPendingSave` from
+    /// deleting the file out from under the review.
+    private func publishTake(for url: URL, sequence: Int, completion: @escaping () -> Void) {
+        Task.detached(priority: .utility) { [self] in
             let asset = AVURLAsset(url: url)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -569,18 +772,24 @@ final class CameraManager: NSObject, ObservableObject {
                 thumbnail: cgImage.map(UIImage.init(cgImage:)),
                 durationText: String(format: "%d:%02d", seconds / 60, seconds % 60)
             )
-            await MainActor.run { [weak self] in
-                self?.lastTake = take
+            await MainActor.run {
+                if sequence == self.takeSequence {
+                    self.lastTake = take
+                }
+                completion()
             }
         }
     }
 
     private func saveToPhotos(url: URL, completion: @escaping () -> Void = {}) {
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+        // Strong self: the Photos hand-off must complete — and the review
+        // copy must be reconciled — even if the prompter was dismissed.
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [self] status in
             guard status == .authorized || status == .limited else {
                 DispatchQueue.main.async {
-                    self?.saveMessage = "Couldn't save: allow Photos access in Settings."
-                    self?.finishPendingSave(of: url)
+                    self.saveMessage = "Couldn't save: allow Photos access in Settings."
+                    self.protectReviewCopy(at: url)
+                    self.finishPendingSave(of: url)
                 }
                 completion()
                 return
@@ -590,14 +799,26 @@ final class CameraManager: NSObject, ObservableObject {
                 PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
             } completionHandler: { success, error in
                 DispatchQueue.main.async {
-                    self?.saveMessage = success
+                    self.saveMessage = success
                         ? "Saved to Photos"
                         : "Couldn't save: \(error?.localizedDescription ?? "unknown error")"
-                    self?.finishPendingSave(of: url)
+                    self.protectReviewCopy(at: url)
+                    self.finishPendingSave(of: url)
                 }
                 completion()
             }
         }
+    }
+
+    /// Upgrades the review copy to complete file protection, matching
+    /// scripts.json. Can't happen before the Photos hand-off — a locked
+    /// device would make the file unreadable mid-save — but afterwards the
+    /// copy is only read while the device is unlocked (in-app review).
+    private func protectReviewCopy(at url: URL) {
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.complete],
+            ofItemAtPath: url.path
+        )
     }
 
     /// The Photos hand-off for this file is done; if a newer take superseded
@@ -617,9 +838,10 @@ final class CameraManager: NSObject, ObservableObject {
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate,
                          AVCaptureAudioDataOutputSampleBufferDelegate {
 
-    func captureOutput(_ output: AVCaptureOutput,
-                       didOutput sampleBuffer: CMSampleBuffer,
-                       from connection: AVCaptureConnection) {
+    nonisolated func captureOutput(_ output: AVCaptureOutput,
+                                   didOutput sampleBuffer: CMSampleBuffer,
+                                   from connection: AVCaptureConnection) {
+        dispatchPrecondition(condition: .onQueue(outputQueue))
         if output === audioOutput {
             audioSampleHandler?(sampleBuffer)
         }
@@ -633,6 +855,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate,
                 writerSessionStarted = true
                 DispatchQueue.main.async {
                     self.isRecording = true
+                    self.isPreparingToRecord = false
                     self.startDurationTimer()
                 }
             }

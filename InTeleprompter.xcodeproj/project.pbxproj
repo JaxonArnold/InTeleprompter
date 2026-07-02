@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		7AC0DE010000000000000001 /* InTeleprompterShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 7AC0DE010000000000000003 /* InTeleprompterShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		04126EEB2FDB98B300455737 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -14,11 +18,33 @@
 			remoteGlobalIDString = 0403906E2FDB2D3A009B32E5;
 			remoteInfo = InTeleprompter;
 		};
+		7AC0DE010000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 040390672FDB2D3A009B32E5 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7AC0DE010000000000000007;
+			remoteInfo = InTeleprompterShare;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7AC0DE010000000000000006 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7AC0DE010000000000000001 /* InTeleprompterShare.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0403906F2FDB2D3A009B32E5 /* InTeleprompter.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InTeleprompter.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InTeleprompterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7AC0DE010000000000000003 /* InTeleprompterShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = InTeleprompterShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -28,6 +54,13 @@
 				Info.plist,
 			);
 			target = 0403906E2FDB2D3A009B32E5 /* InTeleprompter */;
+		};
+		7AC0DE0D0000000000000001 /* Exceptions for "InTeleprompterShare" folder in "InTeleprompterShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7AC0DE010000000000000007 /* InTeleprompterShare */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -43,6 +76,19 @@
 		04126EE82FDB98B300455737 /* InTeleprompterTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = InTeleprompterTests;
+			sourceTree = "<group>";
+		};
+		7AC0DE010000000000000004 /* InTeleprompterShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7AC0DE0D0000000000000001 /* Exceptions for "InTeleprompterShare" folder in "InTeleprompterShare" target */,
+			);
+			path = InTeleprompterShare;
+			sourceTree = "<group>";
+		};
+		7AC0DE010000000000000005 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -62,6 +108,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7AC0DE0C0000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -69,6 +122,8 @@
 			isa = PBXGroup;
 			children = (
 				040390712FDB2D3A009B32E5 /* InTeleprompter */,
+				7AC0DE010000000000000005 /* Shared */,
+				7AC0DE010000000000000004 /* InTeleprompterShare */,
 				04126EE82FDB98B300455737 /* InTeleprompterTests */,
 				040390702FDB2D3A009B32E5 /* Products */,
 			);
@@ -79,6 +134,7 @@
 			children = (
 				0403906F2FDB2D3A009B32E5 /* InTeleprompter.app */,
 				04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */,
+				7AC0DE010000000000000003 /* InTeleprompterShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -93,13 +149,16 @@
 				0403906B2FDB2D3A009B32E5 /* Sources */,
 				0403906C2FDB2D3A009B32E5 /* Frameworks */,
 				0403906D2FDB2D3A009B32E5 /* Resources */,
+				7AC0DE010000000000000006 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				7AC0DE010000000000000008 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				040390712FDB2D3A009B32E5 /* InTeleprompter */,
+				7AC0DE010000000000000005 /* Shared */,
 			);
 			name = InTeleprompter;
 			packageProductDependencies = (
@@ -131,6 +190,29 @@
 			productReference = 04126EE72FDB98B300455737 /* InTeleprompterTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		7AC0DE010000000000000007 /* InTeleprompterShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7AC0DE01000000000000000B /* Build configuration list for PBXNativeTarget "InTeleprompterShare" */;
+			buildPhases = (
+				7AC0DE0C0000000000000001 /* Sources */,
+				7AC0DE0C0000000000000002 /* Frameworks */,
+				7AC0DE0C0000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7AC0DE010000000000000004 /* InTeleprompterShare */,
+				7AC0DE010000000000000005 /* Shared */,
+			);
+			name = InTeleprompterShare;
+			packageProductDependencies = (
+			);
+			productName = InTeleprompterShare;
+			productReference = 7AC0DE010000000000000003 /* InTeleprompterShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -147,6 +229,9 @@
 					04126EE62FDB98B300455737 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = 0403906E2FDB2D3A009B32E5;
+					};
+					7AC0DE010000000000000007 = {
+						CreatedOnToolsVersion = 26.5;
 					};
 				};
 			};
@@ -166,6 +251,7 @@
 			targets = (
 				0403906E2FDB2D3A009B32E5 /* InTeleprompter */,
 				04126EE62FDB98B300455737 /* InTeleprompterTests */,
+				7AC0DE010000000000000007 /* InTeleprompterShare */,
 			);
 		};
 /* End PBXProject section */
@@ -179,6 +265,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		04126EE52FDB98B300455737 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7AC0DE0C0000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -202,6 +295,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7AC0DE0C0000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -209,6 +309,11 @@
 			isa = PBXTargetDependency;
 			target = 0403906E2FDB2D3A009B32E5 /* InTeleprompter */;
 			targetProxy = 04126EEB2FDB98B300455737 /* PBXContainerItemProxy */;
+		};
+		7AC0DE010000000000000008 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7AC0DE010000000000000007 /* InTeleprompterShare */;
+			targetProxy = 7AC0DE010000000000000002 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -266,11 +371,10 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
-				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -324,7 +428,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
@@ -339,6 +443,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = InTeleprompter/InTeleprompter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W826XVM526;
@@ -379,6 +484,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = InTeleprompter/InTeleprompter.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W826XVM526;
@@ -456,6 +562,60 @@
 			};
 			name = Release;
 		};
+		7AC0DE010000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = InTeleprompterShare/InTeleprompterShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W826XVM526;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InTeleprompterShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jack.InTeleprompter.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7AC0DE01000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = InTeleprompterShare/InTeleprompterShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W826XVM526;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InTeleprompterShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jack.InTeleprompter.Share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -482,6 +642,15 @@
 			buildConfigurations = (
 				04126EEE2FDB98B300455737 /* Debug */,
 				04126EEF2FDB98B300455737 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7AC0DE01000000000000000B /* Build configuration list for PBXNativeTarget "InTeleprompterShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7AC0DE010000000000000009 /* Debug */,
+				7AC0DE01000000000000000A /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

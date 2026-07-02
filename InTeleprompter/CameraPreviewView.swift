@@ -1,11 +1,18 @@
 import SwiftUI
 import AVFoundation
 
+/// Shared handle to the preview layer, so taps in view coordinates can be
+/// converted to capture-device coordinates for focus/exposure points.
+final class CameraPreviewLayerBox {
+    weak var layer: AVCaptureVideoPreviewLayer?
+}
+
 /// Live camera preview backed by AVCaptureVideoPreviewLayer, kept upright in
 /// every interface orientation via the device's rotation coordinator.
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
     let device: AVCaptureDevice?
+    let layerBox: CameraPreviewLayerBox
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -13,6 +20,7 @@ struct CameraPreviewView: UIViewRepresentable {
         let view = PreviewView()
         view.videoPreviewLayer.session = session
         view.videoPreviewLayer.videoGravity = .resizeAspectFill
+        layerBox.layer = view.videoPreviewLayer
         return view
     }
 

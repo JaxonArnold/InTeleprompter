@@ -2,61 +2,147 @@ import SwiftUI
 import AVFoundation
 import Combine
 
+/// Scroll position and word layout for the script panel, isolated from the
+/// rest of the prompter: the 60 fps scroll tick mutates `offset` every frame
+/// and the voice tracker advances through words several times a second, so
+/// whatever observes this object re-renders at that rate. Keeping it out of
+/// PrompterView's own @State confines that churn to the panel below.
+final class PrompterScrollState: ObservableObject {
+    @Published var offset: CGFloat = 0
+    @Published var textHeight: CGFloat = 0
+    @Published var wordYPositions: [CGFloat] = []
+    /// One remote-scrub step, in points (~two text lines; the panel keeps
+    /// it in step with the current font size and line spacing).
+    var scrubStep: CGFloat = 56
+
+    func nearestWordIndex(toTextY targetY: CGFloat) -> Int? {
+        guard !wordYPositions.isEmpty else { return nil }
+        var nearest = 0
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (index, y) in wordYPositions.enumerated() where abs(y - targetY) < bestDistance {
+            bestDistance = abs(y - targetY)
+            nearest = index
+        }
+        return nearest
+    }
+
+    /// Point the tracker at the word currently sitting on the reading guide.
+    func alignTracker(to tracker: SpeechScriptTracker) {
+        guard let nearest = nearestWordIndex(toTextY: -offset) else { return }
+        tracker.seek(to: nearest)
+    }
+
+    func reset() {
+        withAnimation(.easeOut(duration: 0.25)) { offset = 0 }
+    }
+}
+
 struct PrompterView: View {
     let script: Script
+    /// Markup parsed once: display text for rendering/tracking, styles for
+    /// the text view, cue ranges the tracker skips.
+    private let formattedScript: FormattedScript
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var camera = CameraManager()
-    @StateObject private var tracker: SpeechScriptTracker
+    @StateObject private var remotes = RemoteControlService()
+    // Held in plain @State (not @StateObject/@ObservedObject): any @Published
+    // change on an observed object invalidates the holding view, and these
+    // two change at frame/word rate. Only the subviews that need the updates
+    // observe them.
+    @State private var tracker: SpeechScriptTracker
+    @State private var scroll = PrompterScrollState()
 
     init(script: Script) {
         self.script = script
-        _tracker = StateObject(wrappedValue: SpeechScriptTracker(scriptText: script.body))
+        let formatted = ScriptFormatter.parse(script.body)
+        formattedScript = formatted
+        _tracker = State(wrappedValue: SpeechScriptTracker(
+            scriptText: formatted.text,
+            excludingRanges: formatted.speakerCueRanges
+        ))
     }
 
     // Persisted prompter settings
     @AppStorage("scrollSpeed") private var scrollSpeed = 60.0        // points per second
-    @AppStorage("fontSize") private var fontSize = 34.0
-    @AppStorage("lineSpacing") private var lineSpacing = 10.0
-    @AppStorage("sideMargin") private var sideMargin = 24.0
-    @AppStorage("overlayOpacity") private var overlayOpacity = 0.55
-    @AppStorage("panelHeightFraction") private var panelHeightFraction = 0.55
     @AppStorage("mirrored") private var mirrored = false
+    @AppStorage("framingAids") private var framingAids = false
     @AppStorage("countdownEnabled") private var countdownEnabled = true
     @AppStorage("autoScrollOnRecord") private var autoScrollOnRecord = true
     @AppStorage("voiceFollowEnabled") private var voiceFollowEnabled = false
     @AppStorage(RecordingQuality.storageKey) private var recordingQuality = RecordingQuality.uhd60.rawValue
     @AppStorage("hasSeenPrompterHints") private var hasSeenPrompterHints = false
 
-    // Scroll engine
-    @State private var offset: CGFloat = 0
-    @State private var dragStartOffset: CGFloat?
-    @State private var isScrolling = false
-    @State private var lastTick: Date?
-    @State private var textHeight: CGFloat = 0
-    @State private var wordYPositions: [CGFloat] = []
-
     // UI state
+    @State private var isScrolling = false
     @State private var controlsVisible = true
     @State private var showSettings = false
     @State private var reviewTake: Take?
     @State private var showHints = false
-
-    // Pinch-to-resize
-    @State private var pinchBaseFontSize: Double?
-    @State private var pinchAnchorIndex: Int?
     @State private var countdown: Int?
     @State private var countdownTask: Task<Void, Never>?
+    /// Bumped to hand key focus back to the remote-keys view after a sheet
+    /// or cover (settings, take review) dismisses.
+    @State private var remoteReclaim = 0
 
-    private let tick = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
+    // Focus & exposure control
+    @State private var previewLayerBox = CameraPreviewLayerBox()
+    @State private var focusIndicator: FocusIndicator?
+    @State private var focusLockFired = false
+    @State private var focusFadeTask: Task<Void, Never>?
+    /// SwiftUI taps fire even after long holds, so a completed long-press
+    /// briefly suppresses the tap handlers that would otherwise re-focus
+    /// (and unlock) right after locking.
+    @State private var tapSuppressedUntil = Date.distantPast
+    @State private var showExposureSlider = false
+    @State private var exposureBiasUI: Double = 0
+    /// When the current take started, for remotes to count up from locally.
+    @State private var recordingStartedAt: Date?
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                CameraPreviewView(session: camera.session, device: camera.activeVideoDevice)
-                    .ignoresSafeArea()
+                // Mirror mode is for beam-splitter rigs: the device is a
+                // display under the glass, so the preview is replaced with
+                // plain black and the script takes the whole screen.
+                if !mirrored {
+                    CameraPreviewView(session: camera.session,
+                                      device: camera.activeVideoDevice,
+                                      layerBox: previewLayerBox)
+                        .ignoresSafeArea()
+                        .overlay {
+                            if let focusIndicator {
+                                focusIndicatorView(focusIndicator)
+                            }
+                        }
+                        // Focus gestures attach here (not the ZStack) so their
+                        // coordinates match the preview layer's bounds exactly.
+                        .onTapGesture { location in
+                            handleFocusTap(at: location)
+                        }
+                        .gesture(longPressFocusGesture)
+                }
 
-                prompterPanel(in: geo)
+                PrompterScriptPanel(
+                    bodyText: formattedScript.text,
+                    styles: formattedScript.styles,
+                    tracker: tracker,
+                    scroll: scroll,
+                    size: geo.size,
+                    isScrolling: $isScrolling
+                )
+
+                // Bluetooth page-turner pedals, scrolling rings, and iPad
+                // keyboards — all plain HID keyboards as far as iOS knows.
+                RemoteKeysView(reclaimToken: remoteReclaim, onKey: handleRemoteKey)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+
+                if framingAids, !mirrored {
+                    RuleOfThirdsGrid()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
 
                 if let countdown {
                     countdownOverlay(countdown)
@@ -83,14 +169,14 @@ struct PrompterView: View {
                         .padding(.bottom, 4)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                     }
+                    if controlsVisible, showExposureSlider {
+                        exposureSliderRow
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                     if controlsVisible { bottomBar }
                 }
                 .padding(.horizontal, 16)
                 .animation(.easeInOut(duration: 0.2), value: controlsVisible)
-
-                if pinchBaseFontSize != nil {
-                    fontSizeHUD
-                }
 
                 if camera.permissionDenied {
                     permissionDeniedOverlay
@@ -102,28 +188,26 @@ struct PrompterView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
+                guard Date() >= tapSuppressedUntil else { return }
                 if showHints {
                     dismissHints()
                 } else {
                     withAnimation { controlsVisible.toggle() }
                 }
             }
-            .onChange(of: geo.size.width) { oldWidth, newWidth in
-                // Rotation reflows the script; keep the same word at the
-                // guide line through the relayout.
-                guard oldWidth > 0, oldWidth != newWidth else { return }
-                pinchAnchorIndex = nearestWordIndex(toTextY: -offset)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    pinchAnchorIndex = nil
-                }
+            .onChange(of: geo.size) { _, _ in
+                // The indicator's position is meaningless after relayout.
+                focusIndicator = nil
             }
         }
         .background(Color.black.ignoresSafeArea())
         .statusBarHidden(true)
-        .onReceive(tick) { now in advanceScroll(at: now) }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             camera.start()
+            remotes.onCommand = handleRemoteCommand
+            remotes.start()
+            publishRemoteState()
             if voiceFollowEnabled { tracker.requestAuthorization() }
             if !hasSeenPrompterHints {
                 Task {
@@ -135,13 +219,19 @@ struct PrompterView: View {
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
             countdownTask?.cancel()
+            focusFadeTask?.cancel()
+            remotes.stop()
             tracker.pause()
             camera.setAudioSampleHandler(nil)
             camera.stop()
         }
         .onChange(of: isScrolling) { _, scrolling in
-            guard voiceFollowEnabled else { return }
+            guard voiceFollowEnabled else {
+                publishRemoteState()
+                return
+            }
             if scrolling { startVoiceFollow() } else { tracker.pause() }
+            publishRemoteState()
         }
         .onChange(of: camera.isRecording) { wasRecording, recording in
             // Recording can end without the stop button — interruption,
@@ -151,12 +241,21 @@ struct PrompterView: View {
                 isScrolling = false
                 withAnimation { controlsVisible = true }
             }
-        }
-        .onChange(of: tracker.status) { old, new in
-            if new == .tracking, old != .tracking { Haptics.lock() }
+            if recording && !wasRecording {
+                recordingStartedAt = Date()
+            } else if !recording {
+                recordingStartedAt = nil
+            }
+            publishRemoteState()
         }
         .onChange(of: camera.isInterrupted) { _, interrupted in
-            if interrupted { Haptics.warning() }
+            if interrupted {
+                // An interruption mid-countdown must not start a recording
+                // into a session that delivers no frames.
+                countdownTask?.cancel()
+                countdown = nil
+                Haptics.warning()
+            }
         }
         .onChange(of: voiceFollowEnabled) { _, enabled in
             if enabled {
@@ -178,6 +277,27 @@ struct PrompterView: View {
         .onChange(of: recordingQuality) { _, _ in
             camera.applyQualityChange()
         }
+        .onChange(of: reviewTake) { _, take in
+            if take == nil { remoteReclaim += 1 }
+        }
+        .onChange(of: showSettings) { _, show in
+            if !show { remoteReclaim += 1 }
+        }
+        .onChange(of: camera.focusState) { _, state in
+            // Camera flipped or focus reset: the indicator no longer applies.
+            if state == .automatic {
+                focusFadeTask?.cancel()
+                if focusIndicator != nil {
+                    withAnimation { focusIndicator = nil }
+                }
+            }
+        }
+        .onChange(of: camera.exposureBias) { _, bias in
+            exposureBiasUI = Double(bias)
+        }
+        .onChange(of: scrollSpeed) { _, _ in
+            publishRemoteState()
+        }
         .sheet(isPresented: $showSettings) {
             PrompterSettingsView()
                 .presentationDetents([.medium, .large])
@@ -185,196 +305,200 @@ struct PrompterView: View {
         .fullScreenCover(item: $reviewTake) { take in
             TakeReviewView(take: take)
         }
-    }
-
-    // MARK: - Scrolling text panel
-
-    private func prompterPanel(in geo: GeometryProxy) -> some View {
-        let panelHeight = geo.size.height * panelHeightFraction
-        let guideY = panelHeight * 0.32
-
-        return VStack(spacing: 0) {
-            ZStack(alignment: .top) {
-                // The script is an overlay so its (very tall) natural height
-                // can't inflate the panel — otherwise the fixed-height frame
-                // below centers the oversized stack and the prompter opens
-                // mid-script.
-                Color.black.opacity(overlayOpacity)
-                    .overlay(alignment: .top) {
-                        scriptText(width: geo.size.width)
-                            .offset(y: guideY + offset)
-                    }
-
-                // Fade the text out at the panel edges.
-                LinearGradient(
-                    stops: [
-                        .init(color: .black.opacity(0.9), location: 0),
-                        .init(color: .clear, location: 0.12),
-                        .init(color: .clear, location: 0.85),
-                        .init(color: .black.opacity(0.9), location: 1),
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-                .allowsHitTesting(false)
-
-                // Reading guide line.
-                Rectangle()
-                    .fill(guideColor)
-                    .animation(.easeInOut(duration: 0.25), value: guideColor)
-                    .frame(width: 34, height: 3)
-                    .clipShape(Capsule())
-                    .offset(x: 10, y: guideY + 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .allowsHitTesting(false)
-            }
-            .frame(height: panelHeight)
-            .clipped()
-            .scaleEffect(x: mirrored ? -1 : 1, y: 1)
-            .gesture(scrubGesture)
-            .simultaneousGesture(pinchGesture)
-
-            Spacer(minLength: 0)
-        }
-        .ignoresSafeArea(edges: .top)
-    }
-
-    private func scriptText(width: CGFloat) -> some View {
-        let textWidth = max(width - sideMargin * 2, 100)
-        return PrompterTextView(
-            text: script.body,
-            fontSize: fontSize,
-            lineSpacing: lineSpacing,
-            width: textWidth,
-            wordRanges: tracker.wordRanges,
-            readWordCount: voiceFollowEnabled ? tracker.currentWordIndex : 0
-        ) { height, positions in
-            textHeight = height
-            wordYPositions = positions
-            // Keep the same word under the guide while pinch-resizing.
-            if let anchor = pinchAnchorIndex, positions.indices.contains(anchor) {
-                offset = -positions[anchor]
+        .alert("Allow Remote Control?",
+               isPresented: Binding(
+                   get: { remotes.pendingPeerName != nil },
+                   set: { if !$0 { remotes.declinePendingPeer() } }
+               )) {
+            Button("Allow") { remotes.acceptPendingPeer() }
+            Button("Decline", role: .cancel) { remotes.declinePendingPeer() }
+        } message: {
+            if let name = remotes.pendingPeerName {
+                Text("“\(name)” wants to control this prompter.")
             }
         }
-        .frame(width: textWidth, alignment: .leading)
-        .padding(.horizontal, sideMargin)
-    }
-
-    private var scrubGesture: some Gesture {
-        DragGesture()
-            .onChanged { value in
-                // A two-finger pinch also registers as a drag; don't let the
-                // two fight over the scroll position.
-                guard pinchBaseFontSize == nil else {
-                    dragStartOffset = nil
-                    return
-                }
-                if dragStartOffset == nil { dragStartOffset = offset }
-                offset = (dragStartOffset ?? 0) + value.translation.height
-            }
-            .onEnded { _ in
-                dragStartOffset = nil
-                // Dragging while voice-following repositions the tracker too,
-                // so you can skip ahead (or back) and keep reading from there.
-                if voiceFollowEnabled { alignTrackerToScroll() }
-            }
-    }
-
-    /// When voice-following has lost the speaker, the guide line turns orange.
-    private var guideColor: Color {
-        guard voiceFollowEnabled, isScrolling else { return .yellow.opacity(0.85) }
-        return tracker.status == .tracking ? .green.opacity(0.85) : .orange.opacity(0.85)
-    }
-
-    private func advanceScroll(at now: Date) {
-        // Use real elapsed time, not an assumed 1/60 s: main-thread timers
-        // jitter under load and ProMotion displays don't tick at 60 Hz.
-        // Capped so a stall (e.g. returning from a sheet) can't cause a leap.
-        let dt = min(lastTick.map { now.timeIntervalSince($0) } ?? 1.0 / 60.0, 0.1)
-        lastTick = now
-        guard isScrolling, dragStartOffset == nil else { return }
-        if voiceFollowEnabled {
-            guard let target = voiceTargetOffset() else { return }
-            // Ease toward the word being spoken, capped at a comfortable pace.
-            let maxStep: CGFloat = 500.0 * dt
-            let step = (target - offset) * min(3.6 * dt, 1)
-            offset += min(max(step, -maxStep), maxStep)
-        } else {
-            offset -= scrollSpeed * dt
-            if offset < -(textHeight + 40) {
-                isScrolling = false   // reached the end
-                Haptics.tap()
-            }
-        }
-    }
-
-    /// Offset that puts the next expected word on the reading guide.
-    private func voiceTargetOffset() -> CGFloat? {
-        guard !wordYPositions.isEmpty else { return nil }
-        let index = min(tracker.currentWordIndex, wordYPositions.count - 1)
-        return -wordYPositions[index]
-    }
-
-    private func nearestWordIndex(toTextY targetY: CGFloat) -> Int? {
-        guard !wordYPositions.isEmpty else { return nil }
-        var nearest = 0
-        var bestDistance = CGFloat.greatestFiniteMagnitude
-        for (index, y) in wordYPositions.enumerated() where abs(y - targetY) < bestDistance {
-            bestDistance = abs(y - targetY)
-            nearest = index
-        }
-        return nearest
-    }
-
-    /// Point the tracker at the word currently sitting on the reading guide.
-    private func alignTrackerToScroll() {
-        guard let nearest = nearestWordIndex(toTextY: -offset) else { return }
-        tracker.seek(to: nearest)
-    }
-
-    // MARK: - Pinch to resize
-
-    private var pinchGesture: some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                if pinchBaseFontSize == nil {
-                    pinchBaseFontSize = fontSize
-                    pinchAnchorIndex = nearestWordIndex(toTextY: -offset)
-                }
-                let target = (pinchBaseFontSize ?? fontSize) * value
-                // Whole-point steps so the text isn't re-laid-out every frame.
-                fontSize = min(max(target.rounded(), 20), 64)
-            }
-            .onEnded { _ in
-                pinchBaseFontSize = nil
-                // Hold the anchor through the final relayout, then let go.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    pinchAnchorIndex = nil
-                }
-            }
-    }
-
-    private var fontSizeHUD: some View {
-        Text("\(Int(fontSize)) pt")
-            .font(.title3.weight(.bold).monospacedDigit())
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .background(.black.opacity(0.7), in: Capsule())
     }
 
     private func startVoiceFollow() {
-        alignTrackerToScroll()
+        scroll.alignTracker(to: tracker)
         camera.setAudioSampleHandler { [weak tracker] buffer in
             tracker?.append(buffer)
         }
         tracker.start()
     }
 
+    // MARK: - Remote keys (pedals, rings, iPad keyboard)
+
+    private func handleRemoteKey(_ key: RemoteKey) {
+        switch key {
+        case .playPause:
+            Haptics.tap()
+            isScrolling.toggle()
+        case .recordToggle:
+            toggleRecording()
+        case .scrubBack:
+            // Scrubbing keeps the scroll running (or paused) as it was;
+            // while voice-following, re-anchor the tracker at the new spot.
+            scroll.offset += scroll.scrubStep
+            if voiceFollowEnabled { scroll.alignTracker(to: tracker) }
+        case .scrubForward:
+            scroll.offset -= scroll.scrubStep
+            if voiceFollowEnabled { scroll.alignTracker(to: tracker) }
+        case .speedDown:
+            scrollSpeed = max(10, scrollSpeed - 10)
+        case .speedUp:
+            scrollSpeed = min(240, scrollSpeed + 10)
+        case .reset:
+            resetScroll()
+        }
+    }
+
+    // MARK: - Remote control (second device)
+
+    private func handleRemoteCommand(_ command: RemoteCommand) {
+        switch command {
+        case .toggleRecord:
+            toggleRecording()
+        case .toggleScroll:
+            Haptics.tap()
+            isScrolling.toggle()
+        case .speedUp:
+            scrollSpeed = min(240, scrollSpeed + 10)
+        case .speedDown:
+            scrollSpeed = max(10, scrollSpeed - 10)
+        case .resetScroll:
+            resetScroll()
+        }
+    }
+
+    /// Latest-wins state snapshot for any connected peer.
+    /// Recording time travels as a start date — remotes count up locally,
+    /// so this never needs to fire more than once per actual change.
+    private func publishRemoteState() {
+        remotes.publish(RemoteState(
+            isPrompterActive: true,
+            isRecording: camera.isRecording,
+            recordingStartedAt: recordingStartedAt,
+            isScrolling: isScrolling,
+            scrollSpeed: scrollSpeed
+        ))
+    }
+
     private func resetScroll() {
-        withAnimation(.easeOut(duration: 0.25)) { offset = 0 }
+        scroll.reset()
         isScrolling = false
         tracker.seek(to: 0)
         Haptics.tap()
+    }
+
+    // MARK: - Focus & exposure control
+
+    /// Tap the preview: focus and meter at that point, continuously.
+    private func handleFocusTap(at location: CGPoint) {
+        guard Date() >= tapSuppressedUntil,
+              let layer = previewLayerBox.layer else { return }
+        let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: location)
+        camera.setPointOfInterest(devicePoint)
+        focusFadeTask?.cancel()
+        withAnimation(.spring(duration: 0.25)) {
+            focusIndicator = FocusIndicator(point: location, locked: false)
+        }
+        // An unlocked indicator fades once focus has settled; a locked one
+        // stays until released.
+        focusFadeTask = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            guard !Task.isCancelled, focusIndicator?.locked == false else { return }
+            withAnimation { focusIndicator = nil }
+        }
+    }
+
+    /// Long-press the preview: hard-lock focus and exposure at that point.
+    private func handleFocusLock(at location: CGPoint) {
+        guard let layer = previewLayerBox.layer else { return }
+        let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: location)
+        Haptics.action()
+        camera.lockFocusAndExposure(at: devicePoint)
+        focusFadeTask?.cancel()
+        // See tapSuppressedUntil: the touch-up after a long-press would
+        // otherwise count as a tap and immediately undo the lock.
+        tapSuppressedUntil = Date().addingTimeInterval(0.5)
+        withAnimation(.spring(duration: 0.25)) {
+            focusIndicator = FocusIndicator(point: location, locked: true)
+        }
+    }
+
+    /// Long-press with location: sequence a zero-distance drag after the
+    /// press completes and read the finger position from it.
+    private var longPressFocusGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.4)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                guard case .second(true, let drag) = value, let drag,
+                      !focusLockFired else { return }
+                focusLockFired = true
+                handleFocusLock(at: drag.location)
+            }
+            .onEnded { _ in
+                focusLockFired = false
+            }
+    }
+
+    private func focusIndicatorView(_ indicator: FocusIndicator) -> some View {
+        // When locked the badge is a button: tapping it releases the lock.
+        // Unlocked it's display-only, so taps fall through to the preview.
+        Button {
+            guard indicator.locked else { return }
+            focusIndicator = nil
+            camera.resetFocusAndExposure()
+        } label: {
+            VStack(spacing: 4) {
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(indicator.locked ? Color.orange : Color.yellow,
+                                  lineWidth: 2)
+                    .frame(width: 76, height: 76)
+                if indicator.locked {
+                    Label("AE/AF", systemImage: "lock.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.black.opacity(0.55), in: Capsule())
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .allowsHitTesting(indicator.locked)
+        .position(indicator.point)
+        .transition(.scale(scale: 1.4).combined(with: .opacity))
+        .accessibilityLabel(indicator.locked
+                            ? "Focus and exposure locked — tap to unlock"
+                            : "Focus point")
+    }
+
+    private var exposureSliderRow: some View {
+        let locked = camera.focusState == .locked
+        let range = Double(camera.exposureBiasRange.lowerBound)...Double(camera.exposureBiasRange.upperBound)
+        return HStack(spacing: 10) {
+            Image(systemName: "sun.min.fill")
+                .font(.caption)
+            Slider(value: $exposureBiasUI, in: range)
+                .onChange(of: exposureBiasUI) { _, bias in
+                    camera.setExposureBias(Float(bias))
+                }
+            Image(systemName: "sun.max.fill")
+                .font(.caption)
+            Text(String(format: "%+.1f", exposureBiasUI))
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .frame(width: 38, alignment: .trailing)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.black.opacity(0.55), in: Capsule())
+        // Bias has no effect while exposure is hard-locked.
+        .disabled(locked)
+        .opacity(locked ? 0.4 : 1)
+        .accessibilityLabel("Exposure compensation")
     }
 
     // MARK: - Top bar
@@ -419,12 +543,27 @@ struct PrompterView: View {
                     .accessibilityLabel("Device is hot — quality reduced")
             }
 
+            if remotes.hasRemote {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.yellow)
+                    .frame(width: 32, height: 32)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .accessibilityLabel("A remote is connected")
+            }
+
             CircleIconButton(systemName: "arrow.triangle.2.circlepath.camera") {
                 Haptics.tap()
                 camera.flipCamera()
             }
             .disabled(camera.isRecording)
             .opacity(camera.isRecording ? 0.4 : 1)
+
+            CircleIconButton(systemName: "sun.max") {
+                Haptics.tap()
+                withAnimation { showExposureSlider.toggle() }
+            }
+            .accessibilityLabel("Exposure compensation")
 
             CircleIconButton(systemName: "slider.horizontal.3") {
                 showSettings = true
@@ -442,7 +581,7 @@ struct PrompterView: View {
             Spacer(minLength: 8)
 
             if voiceFollowEnabled {
-                voiceStatusPill
+                VoiceStatusPill(tracker: tracker, isScrolling: isScrolling)
             } else {
                 speedStepper
             }
@@ -481,35 +620,6 @@ struct PrompterView: View {
                 )
         }
         .accessibilityLabel(voiceFollowEnabled ? "Turn off voice tracking" : "Turn on voice tracking")
-    }
-
-    private var voiceStatusPill: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 6) {
-                Image(systemName: "waveform")
-                Text(voiceStatusText)
-            }
-            .font(.system(.callout).weight(.semibold))
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(.black.opacity(0.55), in: Capsule())
-
-            Text("voice")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-        .foregroundStyle(.white)
-    }
-
-    private var voiceStatusText: String {
-        guard isScrolling else { return "ready" }
-        switch tracker.status {
-        case .idle: return "ready"
-        case .listening: return "listening…"
-        case .tracking: return "following"
-        case .denied: return "no mic access"
-        case .unavailable: return "unavailable"
-        }
     }
 
     private var speedStepper: some View {
@@ -594,7 +704,10 @@ struct PrompterView: View {
     }
 
     private func beginRecording() {
-        guard camera.startRecording() else { return }
+        // A countdown can outlive an interruption that began mid-count —
+        // starting into an interrupted session would create a writer that
+        // waits forever for its first frame.
+        guard !camera.isInterrupted, camera.startRecording() else { return }
         Haptics.action()
         if autoScrollOnRecord { isScrolling = true }
         // Clean framing while rolling — tap anywhere to bring controls back.
@@ -606,6 +719,7 @@ struct PrompterView: View {
     private var hintsOverlay: some View {
         VStack(alignment: .leading, spacing: 18) {
             hintRow(icon: "hand.tap", text: "Tap anywhere to show or hide the controls")
+            hintRow(icon: "viewfinder", text: "Tap the preview to focus and meter there — long-press to lock focus and exposure")
             hintRow(icon: "arrow.up.and.down", text: "Drag the script to move through it")
             hintRow(icon: "arrow.up.left.and.arrow.down.right", text: "Pinch to resize the text")
 
@@ -689,6 +803,292 @@ struct PrompterView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
         .padding(36)
     }
+}
+
+// MARK: - Scrolling script panel
+
+/// The scrolling script panel. Owns the per-frame scroll machinery (tick,
+/// gestures, word layout) and observes the scroll state and the tracker, so
+/// the 60 fps tick and per-word voice updates re-render only this view —
+/// not the record button, bars, or camera preview around it.
+private struct PrompterScriptPanel: View {
+    let bodyText: String
+    let styles: [StyleSpan]
+    @ObservedObject var tracker: SpeechScriptTracker
+    @ObservedObject var scroll: PrompterScrollState
+    let size: CGSize
+    @Binding var isScrolling: Bool
+
+    @AppStorage("scrollSpeed") private var scrollSpeed = 60.0
+    @AppStorage("fontSize") private var fontSize = 34.0
+    @AppStorage("lineSpacing") private var lineSpacing = 10.0
+    @AppStorage("sideMargin") private var sideMargin = 24.0
+    @AppStorage("overlayOpacity") private var overlayOpacity = 0.55
+    @AppStorage("panelHeightFraction") private var panelHeightFraction = 0.55
+    @AppStorage("mirrored") private var mirrored = false
+    @AppStorage("voiceFollowEnabled") private var voiceFollowEnabled = false
+
+    @State private var dragStartOffset: CGFloat?
+    @State private var lastTick: Date?
+    @State private var pinchBaseFontSize: Double?
+    @State private var pinchAnchorIndex: Int?
+
+    private let tick = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        // Mirror mode (beam-splitter rigs): the script fills the screen.
+        let panelHeight = mirrored ? size.height : size.height * panelHeightFraction
+        let guideY = panelHeight * 0.32
+
+        VStack(spacing: 0) {
+            ZStack(alignment: .top) {
+                // The script is an overlay so its (very tall) natural height
+                // can't inflate the panel — otherwise the fixed-height frame
+                // below centers the oversized stack and the prompter opens
+                // mid-script.
+                Color.black.opacity(overlayOpacity)
+                    .overlay(alignment: .top) {
+                        scriptText(width: size.width)
+                            .offset(y: guideY + scroll.offset)
+                    }
+
+                // Fade the text out at the panel edges.
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.9), location: 0),
+                        .init(color: .clear, location: 0.12),
+                        .init(color: .clear, location: 0.85),
+                        .init(color: .black.opacity(0.9), location: 1),
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+
+                // Reading guide line.
+                Rectangle()
+                    .fill(guideColor)
+                    .animation(.easeInOut(duration: 0.25), value: guideColor)
+                    .frame(width: 34, height: 3)
+                    .clipShape(Capsule())
+                    .offset(x: 10, y: guideY + 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .allowsHitTesting(false)
+            }
+            .frame(height: panelHeight)
+            .clipped()
+            .scaleEffect(x: mirrored ? -1 : 1, y: 1)
+            .gesture(scrubGesture)
+            .simultaneousGesture(pinchGesture)
+
+            Spacer(minLength: 0)
+        }
+        .ignoresSafeArea(edges: .top)
+        .overlay {
+            if pinchBaseFontSize != nil {
+                fontSizeHUD
+            }
+        }
+        .onReceive(tick) { now in advanceScroll(at: now) }
+        .onChange(of: size.width) { oldWidth, newWidth in
+            // Rotation reflows the script; keep the same word at the
+            // guide line through the relayout.
+            guard oldWidth > 0, oldWidth != newWidth else { return }
+            pinchAnchorIndex = scroll.nearestWordIndex(toTextY: -scroll.offset)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                pinchAnchorIndex = nil
+            }
+        }
+        .onChange(of: tracker.status) { old, new in
+            if new == .tracking, old != .tracking { Haptics.lock() }
+        }
+    }
+
+    private func scriptText(width: CGFloat) -> some View {
+        let textWidth = max(width - sideMargin * 2, 100)
+        return PrompterTextView(
+            text: bodyText,
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            width: textWidth,
+            styles: styles,
+            wordRanges: tracker.wordRanges,
+            readWordCount: voiceFollowEnabled ? tracker.currentWordIndex : 0
+        ) { height, positions in
+            scroll.textHeight = height
+            scroll.wordYPositions = positions
+            // Remote scrubbing steps ~two lines at the current text size.
+            scroll.scrubStep = (fontSize + lineSpacing) * 2
+            // Keep the same word under the guide while pinch-resizing.
+            if let anchor = pinchAnchorIndex, positions.indices.contains(anchor) {
+                scroll.offset = -positions[anchor]
+            }
+        }
+        .frame(width: textWidth, alignment: .leading)
+        .padding(.horizontal, sideMargin)
+    }
+
+    private var scrubGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in
+                // A two-finger pinch also registers as a drag; don't let the
+                // two fight over the scroll position.
+                guard pinchBaseFontSize == nil else {
+                    dragStartOffset = nil
+                    return
+                }
+                if dragStartOffset == nil { dragStartOffset = scroll.offset }
+                scroll.offset = (dragStartOffset ?? 0) + value.translation.height
+            }
+            .onEnded { _ in
+                dragStartOffset = nil
+                // Dragging while voice-following repositions the tracker too,
+                // so you can skip ahead (or back) and keep reading from there.
+                if voiceFollowEnabled { scroll.alignTracker(to: tracker) }
+            }
+    }
+
+    /// When voice-following has lost the speaker, the guide line turns orange.
+    private var guideColor: Color {
+        guard voiceFollowEnabled, isScrolling else { return .yellow.opacity(0.85) }
+        return tracker.status == .tracking ? .green.opacity(0.85) : .orange.opacity(0.85)
+    }
+
+    private func advanceScroll(at now: Date) {
+        guard isScrolling, dragStartOffset == nil else {
+            // Idle: write nothing, so the 60 fps tick costs no re-render.
+            // (Only write on the transition — @State invalidates per write.)
+            if lastTick != nil { lastTick = nil }
+            return
+        }
+        // Use real elapsed time, not an assumed 1/60 s: main-thread timers
+        // jitter under load and ProMotion displays don't tick at 60 Hz.
+        // Capped so a stall (e.g. returning from a sheet) can't cause a leap.
+        let dt = min(lastTick.map { now.timeIntervalSince($0) } ?? 1.0 / 60.0, 0.1)
+        lastTick = now
+        if voiceFollowEnabled {
+            guard let target = voiceTargetOffset() else { return }
+            // Ease toward the word being spoken, capped at a comfortable pace.
+            let maxStep: CGFloat = 500.0 * dt
+            let step = (target - scroll.offset) * min(3.6 * dt, 1)
+            scroll.offset += min(max(step, -maxStep), maxStep)
+        } else {
+            scroll.offset -= scrollSpeed * dt
+            if scroll.offset < -(scroll.textHeight + 40) {
+                isScrolling = false   // reached the end
+                Haptics.tap()
+            }
+        }
+    }
+
+    /// Offset that puts the next expected word on the reading guide.
+    private func voiceTargetOffset() -> CGFloat? {
+        guard !scroll.wordYPositions.isEmpty else { return nil }
+        let index = min(tracker.currentWordIndex, scroll.wordYPositions.count - 1)
+        return -scroll.wordYPositions[index]
+    }
+
+    // MARK: Pinch to resize
+
+    private var pinchGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { value in
+                if pinchBaseFontSize == nil {
+                    pinchBaseFontSize = fontSize
+                    pinchAnchorIndex = scroll.nearestWordIndex(toTextY: -scroll.offset)
+                }
+                let target = (pinchBaseFontSize ?? fontSize) * value
+                // Whole-point steps so the text isn't re-laid-out every frame.
+                fontSize = min(max(target.rounded(), 20), 64)
+            }
+            .onEnded { _ in
+                pinchBaseFontSize = nil
+                // Hold the anchor through the final relayout, then let go.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    pinchAnchorIndex = nil
+                }
+            }
+    }
+
+    private var fontSizeHUD: some View {
+        Text("\(Int(fontSize)) pt")
+            .font(.title3.weight(.bold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(.black.opacity(0.7), in: Capsule())
+    }
+}
+
+// MARK: - Voice status pill
+
+/// Observes the tracker so per-word `currentWordIndex` updates invalidate
+/// only this pill, not the bars around it.
+private struct VoiceStatusPill: View {
+    @ObservedObject var tracker: SpeechScriptTracker
+    let isScrolling: Bool
+
+    var body: some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform")
+                Text(statusText)
+            }
+            .font(.system(.callout).weight(.semibold))
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(.black.opacity(0.55), in: Capsule())
+
+            Text("voice")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(.white)
+    }
+
+    private var statusText: String {
+        guard isScrolling else { return "ready" }
+        switch tracker.status {
+        case .idle: return "ready"
+        case .listening: return "listening…"
+        case .tracking: return "following"
+        case .denied: return "no mic access"
+        case .unavailable: return "unavailable"
+        }
+    }
+}
+
+// MARK: - Framing aids
+
+/// Rule-of-thirds grid over the preview, for lining up your eyeline with
+/// the lens. Drawn once per layout via Canvas — cheap even while scrolling.
+private struct RuleOfThirdsGrid: View {
+    var body: some View {
+        Canvas { context, size in
+            let color = Color.white.opacity(0.28)
+            for x in [size.width / 3, size.width * 2 / 3] {
+                var path = Path()
+                path.move(to: CGPoint(x: x, y: 0))
+                path.addLine(to: CGPoint(x: x, y: size.height))
+                context.stroke(path, with: .color(color), lineWidth: 0.5)
+            }
+            for y in [size.height / 3, size.height * 2 / 3] {
+                var path = Path()
+                path.move(to: CGPoint(x: 0, y: y))
+                path.addLine(to: CGPoint(x: size.width, y: y))
+                context.stroke(path, with: .color(color), lineWidth: 0.5)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Focus indicator model
+
+/// A focus point in preview coordinates. `locked` turns it into the
+/// tappable AE/AF lock badge.
+private struct FocusIndicator: Equatable {
+    var point: CGPoint
+    var locked: Bool
 }
 
 // MARK: - Reusable circular icon button

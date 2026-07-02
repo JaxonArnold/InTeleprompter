@@ -1,9 +1,13 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ScriptListView: View {
     @EnvironmentObject private var store: ScriptStore
     @State private var presentingScript: Script?
     @State private var newScript: Script?
+    @State private var showImporter = false
+    @State private var showRemote = false
+    @State private var importError: ScriptImportError?
 
     var body: some View {
         NavigationStack {
@@ -16,6 +20,31 @@ struct ScriptListView: View {
             }
             .navigationTitle("Scripts")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showRemote = true
+                    } label: {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                    }
+                    .accessibilityLabel("Remote control another device")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button {
+                            showImporter = true
+                        } label: {
+                            Label("Import File…", systemImage: "doc")
+                        }
+                        Button {
+                            pasteFromClipboard()
+                        } label: {
+                            Label("Paste from Clipboard", systemImage: "doc.on.clipboard")
+                        }
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .accessibilityLabel("Import script")
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         let script = Script(title: "", body: "")
@@ -33,6 +62,25 @@ struct ScriptListView: View {
         }
         .fullScreenCover(item: $presentingScript) { script in
             PrompterView(script: script)
+        }
+        .sheet(isPresented: $showRemote) {
+            RemoteControlView()
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: ScriptImporter.pickerContentTypes) { result in
+            if case .success(let url) = result { importFile(from: url) }
+        }
+        .alert("Couldn't Import Script",
+               isPresented: Binding(
+                   get: { importError != nil },
+                   set: { if !$0 { importError = nil } }
+               )) {
+            if case .googleDocShortcut(let url) = importError, let url {
+                Button("Open Google Docs") { UIApplication.shared.open(url) }
+            }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(importError?.errorDescription ?? "")
         }
     }
 
@@ -59,11 +107,41 @@ struct ScriptListView: View {
                 .foregroundStyle(.secondary)
             Text("No scripts yet")
                 .font(.title3.weight(.semibold))
-            Text("Tap + to write your first script, then present it with the camera rolling.")
+            Text("Tap + to write your first script, or import one — PDF, Word, RTF, Markdown, and plain text all work.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 40)
+        }
+    }
+
+    // MARK: - Importing
+
+    private func importFile(from url: URL) {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let imported = try ScriptImporter.load(from: url)
+            store.add(Script(title: imported.title, body: imported.text))
+        } catch let error as ScriptImportError {
+            importError = error
+        } catch {
+            importError = .unreadableFile
+        }
+    }
+
+    private func pasteFromClipboard() {
+        guard let text = UIPasteboard.general.string else {
+            importError = .emptyText(.generic)
+            return
+        }
+        do {
+            let imported = try ScriptImporter.load(text: text)
+            store.add(Script(title: imported.title, body: imported.text))
+        } catch let error as ScriptImportError {
+            importError = error
+        } catch {
+            importError = .unreadableFile
         }
     }
 }

@@ -10,6 +10,7 @@ struct PrompterSettingsView: View {
     @AppStorage("overlayOpacity") private var overlayOpacity = 0.55
     @AppStorage("panelHeightFraction") private var panelHeightFraction = 0.55
     @AppStorage("mirrored") private var mirrored = false
+    @AppStorage("framingAids") private var framingAids = false
     @AppStorage("countdownEnabled") private var countdownEnabled = true
     @AppStorage("autoScrollOnRecord") private var autoScrollOnRecord = true
     @AppStorage("voiceFollowEnabled") private var voiceFollowEnabled = false
@@ -38,12 +39,17 @@ struct PrompterSettingsView: View {
                     Text("With voice tracking on, the script follows your reading and pauses when you stop or go off script. Speech is processed on-device whenever your language supports it.")
                 }
 
-                Section("Display") {
+                Section {
                     LabeledSlider(title: "Background dim", value: $overlayOpacity,
                                   range: 0...0.95, format: "%.0f%%", scale: 100)
                     LabeledSlider(title: "Panel height", value: $panelHeightFraction,
                                   range: 0.3...0.85, format: "%.0f%%", scale: 100)
                     Toggle("Mirror text (beam-splitter rigs)", isOn: $mirrored)
+                    Toggle("Framing aids (rule-of-thirds grid)", isOn: $framingAids)
+                } header: {
+                    Text("Display")
+                } footer: {
+                    Text("Mirror mode flips the text, hides the camera preview, and expands the script to fill the screen — for rigs where the iPhone sits under the glass.")
                 }
 
                 Section {
@@ -68,6 +74,7 @@ struct PrompterSettingsView: View {
                         overlayOpacity = 0.55
                         panelHeightFraction = 0.55
                         mirrored = false
+                        framingAids = false
                         countdownEnabled = true
                         autoScrollOnRecord = true
                         voiceFollowEnabled = false

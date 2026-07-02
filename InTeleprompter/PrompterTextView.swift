@@ -9,6 +9,9 @@ struct PrompterTextView: UIViewRepresentable {
     let fontSize: Double
     let lineSpacing: Double
     let width: CGFloat
+    /// Styled spans (bold/italic/color) from ScriptFormatter, in the same
+    /// coordinates as `text`.
+    let styles: [StyleSpan]
     /// UTF-16 ranges of the script's words (from ScriptTokenizer).
     let wordRanges: [NSRange]
     /// Words before this index render dimmed — already read by the speaker.
@@ -41,7 +44,8 @@ struct PrompterTextView: UIViewRepresentable {
             context.coordinator.signature = signature
             context.coordinator.appliedReadCount = 0
 
-            let attributed = Self.attributedScript(text, fontSize: fontSize, lineSpacing: lineSpacing)
+            let attributed = Self.attributedScript(text, fontSize: fontSize,
+                                                   lineSpacing: lineSpacing, styles: styles)
             view.attributedText = attributed
 
             let (height, positions) = context.coordinator.measure(attributed, width: width, wordRanges: wordRanges)
@@ -119,7 +123,10 @@ struct PrompterTextView: UIViewRepresentable {
         }
     }
 
-    static func attributedScript(_ text: String, fontSize: Double, lineSpacing: Double) -> NSAttributedString {
+    static func attributedScript(_ text: String,
+                                 fontSize: Double,
+                                 lineSpacing: Double,
+                                 styles: [StyleSpan]) -> NSAttributedString {
         let base = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
         let font = base.fontDescriptor.withDesign(.rounded)
             .map { UIFont(descriptor: $0, size: fontSize) } ?? base
@@ -132,11 +139,38 @@ struct PrompterTextView: UIViewRepresentable {
         shadow.shadowBlurRadius = 2
         shadow.shadowOffset = CGSize(width: 0, height: 1)
 
-        return NSAttributedString(string: text, attributes: [
+        let attributed = NSMutableAttributedString(string: text, attributes: [
             .font: font,
             .foregroundColor: UIColor.white,
             .paragraphStyle: paragraph,
             .shadow: shadow,
         ])
+
+        for span in styles {
+            attributed.addAttribute(.font, value: spanFont(for: span.style, base: font, size: fontSize),
+                                    range: span.range)
+            if let color = span.color {
+                attributed.addAttribute(.foregroundColor, value: color, range: span.range)
+            }
+        }
+        return attributed
+    }
+
+    /// Emphasis variants of the prompter font. Bold goes heavy: at reading
+    /// distance, one weight step above the semibold body text barely reads.
+    /// SF Rounded has no italic variant — and asking its descriptor for the
+    /// italic trait quietly resolves to a non-italic font — so italics use
+    /// the system italic outright. Bold wins when both are set: emphasis
+    /// reads better than slant on-camera.
+    static func spanFont(for style: ScriptStyle, base: UIFont, size: CGFloat) -> UIFont {
+        if style.contains(.bold) {
+            let heavy = UIFont.systemFont(ofSize: size, weight: .heavy)
+            return heavy.fontDescriptor.withDesign(.rounded)
+                .map { UIFont(descriptor: $0, size: size) } ?? heavy
+        }
+        if style.contains(.italic) {
+            return UIFont.italicSystemFont(ofSize: size)
+        }
+        return base
     }
 }

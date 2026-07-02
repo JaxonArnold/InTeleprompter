@@ -68,8 +68,11 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
     /// True between start() and pause(); authorization can resolve after a
     /// quick toggle-off, in which case the task must not begin.
     private var shouldBeRunning = false
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private let requestLock = NSLock()
+    /// Guarded by requestLock so append() can be called from the audio tap's
+    /// queue; nonisolated(unsafe) makes that explicit under MainActor default
+    /// isolation — the lock provides the synchronization.
+    nonisolated(unsafe) private var request: SFSpeechAudioBufferRecognitionRequest?
+    nonisolated private let requestLock = NSLock()
     private var task: SFSpeechRecognitionTask?
     /// Bumped whenever the active task changes so stale callbacks are ignored.
     private var generation = 0
@@ -83,8 +86,13 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
     private var decayTimer: Timer?
     private var watchdogTimer: Timer?
 
-    init(scriptText: String) {
-        let words = ScriptTokenizer.words(in: scriptText)
+    init(scriptText: String, excludingRanges excludedRanges: [NSRange] = []) {
+        // Speaker cues are displayed but never read aloud — drop any word
+        // that intersects an excluded range so the tracker doesn't wait for
+        // words that will never come.
+        let words = ScriptTokenizer.words(in: scriptText).filter { word in
+            !excludedRanges.contains { NSIntersectionRange($0, word.range).length > 0 }
+        }
         self.words = words
         wordRanges = words.map(\.range)
         contextualStrings = Self.distinctiveWords(in: words)
@@ -108,7 +116,10 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
     }
 
     func start() {
-        guard status == .idle || status == .denied else { return }
+        // .unavailable is a startable state too: recognizer availability is
+        // transient (another app using speech, locale without on-device
+        // support while offline), and beginTask re-checks it every attempt.
+        guard status == .idle || status == .denied || status == .unavailable else { return }
         guard recognizer != nil else {
             status = .unavailable
             return
@@ -145,7 +156,10 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
         decayTimer = nil
         watchdogTimer?.invalidate()
         watchdogTimer = nil
-        if status == .listening || status == .tracking {
+        if status != .denied {
+            // Any resumable state goes back to idle — including .unavailable.
+            // Leaving it in place would wedge voice tracking for the rest of
+            // the session: start() only proceeds from a small set of states.
             status = .idle
         }
     }
@@ -158,7 +172,7 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
     }
 
     /// Feed microphone audio. Safe to call from any queue.
-    func append(_ sampleBuffer: CMSampleBuffer) {
+    nonisolated func append(_ sampleBuffer: CMSampleBuffer) {
         requestLock.lock()
         let request = request
         requestLock.unlock()
@@ -191,6 +205,7 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
         requestLock.unlock()
 
         consumedSegments = 0
+        recentSpoken = []   // pair evidence can't carry across tasks
         lastResultDate = Date()
         if status != .tracking { status = .listening }
         startDecayTimer()
