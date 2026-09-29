@@ -3,6 +3,10 @@ import SwiftUI
 struct PrompterSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
+    /// The live camera, for exposure compensation (a hardware setting, not
+    /// a persisted preference).
+    @ObservedObject var camera: CameraManager
+
     @AppStorage("scrollSpeed") private var scrollSpeed = 60.0
     @AppStorage("fontSize") private var fontSize = 34.0
     @AppStorage("lineSpacing") private var lineSpacing = 10.0
@@ -50,6 +54,20 @@ struct PrompterSettingsView: View {
                     Text("Display")
                 } footer: {
                     Text("Mirror mode flips the text, hides the camera preview, and expands the script to fill the screen — for rigs where the iPhone sits under the glass.")
+                }
+
+                Section {
+                    LabeledSlider(title: "Exposure", value: Binding(
+                        get: { Double(camera.exposureBias) },
+                        set: { camera.setExposureBias(Float($0)) }
+                    ), range: Double(camera.exposureBiasRange.lowerBound)...Double(camera.exposureBiasRange.upperBound),
+                       format: "%+.1f EV")
+                    // Bias has no effect while exposure is hard-locked.
+                    .disabled(camera.focusState == .locked)
+                } header: {
+                    Text("Camera")
+                } footer: {
+                    Text("Exposure compensation brightens or darkens the image. It has no effect while focus and exposure are locked (long-press the preview to lock).")
                 }
 
                 Section {

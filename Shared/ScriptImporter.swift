@@ -127,9 +127,14 @@ enum ScriptImporter {
             .text,
             .rtf, .rtfd,
             .pdf,
-            UTType(importedAs: "org.openxmlformats.wordprocessingml.document"),  // .docx
-            UTType(importedAs: "net.daringfireball.markdown"),
         ]
+        // Prefer system-declared types; fall back to extension-based lookups without requiring Info.plist declarations.
+        if let docx = UTType(filenameExtension: "docx", conformingTo: .data) {
+            types.append(docx)
+        }
+        if let markdown = UTType(filenameExtension: "md", conformingTo: .plainText) {
+            types.append(markdown)
+        }
         if let gdoc = UTType(filenameExtension: "gdoc", conformingTo: .data) {
             types.append(gdoc)
         }

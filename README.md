@@ -9,7 +9,7 @@ Point the front camera at yourself, present a script over the live preview, and 
 **Prompter**
 - Script overlays a live camera preview, with a reading guide line and edge fades
 - Optional rule-of-thirds framing grid
-- Tap-to-focus with continuous metering; long-press for a hard AE/AF lock, plus an exposure compensation slider
+- Tap-to-focus with continuous metering; long-press for a hard AE/AF lock, with exposure compensation in prompter settings
 - Voice tracking: on-device speech recognition follows you through the script word by word
 - Words dim as they're read, so you always know where the tracker thinks you are
 - Manual mode with adjustable speed, drag to scrub, pinch to resize text

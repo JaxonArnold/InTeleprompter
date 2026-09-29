@@ -94,8 +94,6 @@ struct PrompterView: View {
     /// briefly suppresses the tap handlers that would otherwise re-focus
     /// (and unlock) right after locking.
     @State private var tapSuppressedUntil = Date.distantPast
-    @State private var showExposureSlider = false
-    @State private var exposureBiasUI: Double = 0
     /// When the current take started, for remotes to count up from locally.
     @State private var recordingStartedAt: Date?
 
@@ -168,10 +166,6 @@ struct PrompterView: View {
                         }
                         .padding(.bottom, 4)
                         .transition(.move(edge: .leading).combined(with: .opacity))
-                    }
-                    if controlsVisible, showExposureSlider {
-                        exposureSliderRow
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                     if controlsVisible { bottomBar }
                 }
@@ -292,14 +286,11 @@ struct PrompterView: View {
                 }
             }
         }
-        .onChange(of: camera.exposureBias) { _, bias in
-            exposureBiasUI = Double(bias)
-        }
         .onChange(of: scrollSpeed) { _, _ in
             publishRemoteState()
         }
         .sheet(isPresented: $showSettings) {
-            PrompterSettingsView()
+            PrompterSettingsView(camera: camera)
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(item: $reviewTake) { take in
@@ -475,32 +466,6 @@ struct PrompterView: View {
                             : "Focus point")
     }
 
-    private var exposureSliderRow: some View {
-        let locked = camera.focusState == .locked
-        let range = Double(camera.exposureBiasRange.lowerBound)...Double(camera.exposureBiasRange.upperBound)
-        return HStack(spacing: 10) {
-            Image(systemName: "sun.min.fill")
-                .font(.caption)
-            Slider(value: $exposureBiasUI, in: range)
-                .onChange(of: exposureBiasUI) { _, bias in
-                    camera.setExposureBias(Float(bias))
-                }
-            Image(systemName: "sun.max.fill")
-                .font(.caption)
-            Text(String(format: "%+.1f", exposureBiasUI))
-                .font(.caption.monospacedDigit().weight(.semibold))
-                .frame(width: 38, alignment: .trailing)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 9)
-        .background(.black.opacity(0.55), in: Capsule())
-        // Bias has no effect while exposure is hard-locked.
-        .disabled(locked)
-        .opacity(locked ? 0.4 : 1)
-        .accessibilityLabel("Exposure compensation")
-    }
-
     // MARK: - Top bar
 
     private var topBar: some View {
@@ -558,12 +523,6 @@ struct PrompterView: View {
             }
             .disabled(camera.isRecording)
             .opacity(camera.isRecording ? 0.4 : 1)
-
-            CircleIconButton(systemName: "sun.max") {
-                Haptics.tap()
-                withAnimation { showExposureSlider.toggle() }
-            }
-            .accessibilityLabel("Exposure compensation")
 
             CircleIconButton(systemName: "slider.horizontal.3") {
                 showSettings = true
