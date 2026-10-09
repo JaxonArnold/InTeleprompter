@@ -1,5 +1,8 @@
 # InTeleprompter
 
+Download here: https://apps.apple.com/us/app/inteleprompter-pro/id6815461836
+InTeleprompter Pro
+
 An iOS teleprompter that records you while you read and follows your voice.
 
 Point the front camera at yourself, present a script over the live preview, and record in up to 4K60 HEVC. With voice tracking enabled, the script scrolls as you speak: it keeps pace with your reading, pauses when you stop or ad-lib, and picks back up when you return to the script with no fixed scroll speed to fight.
