@@ -67,7 +67,7 @@ struct PrompterSettingsView: View {
                 } header: {
                     Text("Camera")
                 } footer: {
-                    Text("Exposure compensation brightens or darkens the image. It has no effect while focus and exposure are locked (long-press the preview to lock).")
+                    Text("Exposure compensation brightens or darkens the image. It has no effect while focus and exposure are locked (keep holding the preview after it focuses to lock).")
                 }
 
                 Section {

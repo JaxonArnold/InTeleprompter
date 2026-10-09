@@ -406,8 +406,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// exposure slider's enabled state.
     enum FocusState: Equatable {
         case automatic         // continuous, center-weighted (default)
-        case pointOfInterest   // continuous AF/AE at the tapped point
-        case locked            // hard AE/AF lock (long-press)
+        case pointOfInterest   // continuous AF/AE at the held point
+        case locked            // hard AE/AF lock (extended hold)
     }
     @Published private(set) var focusState: FocusState = .automatic
     /// Exposure compensation in EV, clamped to the active device's range.
@@ -421,8 +421,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// Bias as applied to the hardware (mirrored to exposureBias for the UI).
     nonisolated(unsafe) private var appliedExposureBias: Float = 0
 
-    /// Tap-to-focus: focus and meter at a point (device coordinates, 0–1),
-    /// continuously — the tapped subject stays metered as the shot changes.
+    /// Hold-to-focus: focus and meter at a point (device coordinates, 0–1),
+    /// continuously — the chosen subject stays metered as the shot changes.
     func setPointOfInterest(_ point: CGPoint) {
         sessionQueue.async { [weak self] in
             guard let self, let device = self.videoDeviceInput?.device else { return }
@@ -440,7 +440,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    /// Long-press: hard-lock focus and exposure at a point — nothing hunts,
+    /// Extended hold: hard-lock focus and exposure at a point — nothing hunts,
     /// no matter what moves through the frame.
     func lockFocusAndExposure(at point: CGPoint) {
         sessionQueue.async { [weak self] in

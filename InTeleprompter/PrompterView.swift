@@ -88,11 +88,13 @@ struct PrompterView: View {
     // Focus & exposure control
     @State private var previewLayerBox = CameraPreviewLayerBox()
     @State private var focusIndicator: FocusIndicator?
-    @State private var focusLockFired = false
     @State private var focusFadeTask: Task<Void, Never>?
-    /// SwiftUI taps fire even after long holds, so a completed long-press
-    /// briefly suppresses the tap handlers that would otherwise re-focus
-    /// (and unlock) right after locking.
+    /// Holding the preview focuses; holding longer escalates to a lock.
+    @GestureState private var isHoldingFocus = false
+    @State private var holdFocusFired = false
+    @State private var focusLockTask: Task<Void, Never>?
+    /// SwiftUI taps fire even after long holds, so a hold that focused
+    /// suppresses the controls toggle its touch-up would otherwise trigger.
     @State private var tapSuppressedUntil = Date.distantPast
     /// When the current take started, for remotes to count up from locally.
     @State private var recordingStartedAt: Date?
@@ -113,12 +115,11 @@ struct PrompterView: View {
                                 focusIndicatorView(focusIndicator)
                             }
                         }
-                        // Focus gestures attach here (not the ZStack) so their
-                        // coordinates match the preview layer's bounds exactly.
-                        .onTapGesture { location in
-                            handleFocusTap(at: location)
-                        }
-                        .gesture(longPressFocusGesture)
+                        // Focus is press-and-hold only, so a quick tap falls
+                        // through to the controls toggle — the tap people use
+                        // to find the stop button mid-take. Attached here (not
+                        // the ZStack) so coordinates match the preview layer.
+                        .gesture(holdFocusGesture)
                 }
 
                 PrompterScriptPanel(
@@ -182,7 +183,7 @@ struct PrompterView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                guard Date() >= tapSuppressedUntil else { return }
+                guard !holdFocusFired, Date() >= tapSuppressedUntil else { return }
                 if showHints {
                     dismissHints()
                 } else {
@@ -214,6 +215,7 @@ struct PrompterView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             countdownTask?.cancel()
             focusFadeTask?.cancel()
+            focusLockTask?.cancel()
             remotes.stop()
             tracker.pause()
             camera.setAudioSampleHandler(nil)
@@ -276,6 +278,11 @@ struct PrompterView: View {
         }
         .onChange(of: showSettings) { _, show in
             if !show { remoteReclaim += 1 }
+        }
+        .onChange(of: isHoldingFocus) { _, holding in
+            // Gesture state also resets when the system cancels the gesture,
+            // so cleanup lives here rather than in onEnded.
+            if !holding { endHoldFocus() }
         }
         .onChange(of: camera.focusState) { _, state in
             // Camera flipped or focus reset: the indicator no longer applies.
@@ -384,54 +391,73 @@ struct PrompterView: View {
 
     // MARK: - Focus & exposure control
 
-    /// Tap the preview: focus and meter at that point, continuously.
-    private func handleFocusTap(at location: CGPoint) {
-        guard Date() >= tapSuppressedUntil,
-              let layer = previewLayerBox.layer else { return }
+    /// How long to hold the preview before focus/metering moves there.
+    private static let holdToFocusDuration = 0.35
+    /// Further hold, after focusing, that escalates to a hard AE/AF lock.
+    private static let holdToLockDelay = 0.8
+
+    /// Press-and-hold with location: sequence a zero-distance drag after the
+    /// press completes and read the finger position from it.
+    private var holdFocusGesture: some Gesture {
+        LongPressGesture(minimumDuration: Self.holdToFocusDuration)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .updating($isHoldingFocus) { value, holding, _ in
+                if case .second(true, _) = value { holding = true }
+            }
+            .onChanged { value in
+                guard case .second(true, let drag) = value, let drag,
+                      !holdFocusFired else { return }
+                holdFocusFired = true
+                beginHoldFocus(at: drag.location)
+            }
+    }
+
+    /// Hold reached: focus and meter at that point, continuously, and arm the
+    /// lock in case the finger stays down.
+    private func beginHoldFocus(at location: CGPoint) {
+        guard let layer = previewLayerBox.layer else { return }
         let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: location)
+        Haptics.tap()
         camera.setPointOfInterest(devicePoint)
         focusFadeTask?.cancel()
         withAnimation(.spring(duration: 0.25)) {
             focusIndicator = FocusIndicator(point: location, locked: false)
         }
-        // An unlocked indicator fades once focus has settled; a locked one
-        // stays until released.
-        focusFadeTask = Task {
-            try? await Task.sleep(for: .seconds(1.4))
-            guard !Task.isCancelled, focusIndicator?.locked == false else { return }
-            withAnimation { focusIndicator = nil }
+        focusLockTask?.cancel()
+        focusLockTask = Task {
+            try? await Task.sleep(for: .seconds(Self.holdToLockDelay))
+            guard !Task.isCancelled else { return }
+            lockFocus(at: location, devicePoint: devicePoint)
         }
     }
 
-    /// Long-press the preview: hard-lock focus and exposure at that point.
-    private func handleFocusLock(at location: CGPoint) {
-        guard let layer = previewLayerBox.layer else { return }
-        let devicePoint = layer.captureDevicePointConverted(fromLayerPoint: location)
+    /// Still holding: hard-lock focus and exposure at that point.
+    private func lockFocus(at location: CGPoint, devicePoint: CGPoint) {
         Haptics.action()
         camera.lockFocusAndExposure(at: devicePoint)
         focusFadeTask?.cancel()
-        // See tapSuppressedUntil: the touch-up after a long-press would
-        // otherwise count as a tap and immediately undo the lock.
-        tapSuppressedUntil = Date().addingTimeInterval(0.5)
         withAnimation(.spring(duration: 0.25)) {
             focusIndicator = FocusIndicator(point: location, locked: true)
         }
     }
 
-    /// Long-press with location: sequence a zero-distance drag after the
-    /// press completes and read the finger position from it.
-    private var longPressFocusGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.4)
-            .sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { value in
-                guard case .second(true, let drag) = value, let drag,
-                      !focusLockFired else { return }
-                focusLockFired = true
-                handleFocusLock(at: drag.location)
-            }
-            .onEnded { _ in
-                focusLockFired = false
-            }
+    /// Finger lifted (or the gesture was cancelled).
+    private func endHoldFocus() {
+        focusLockTask?.cancel()
+        focusLockTask = nil
+        guard holdFocusFired else { return }
+        holdFocusFired = false
+        // See tapSuppressedUntil: the touch-up must not also toggle controls.
+        tapSuppressedUntil = Date().addingTimeInterval(0.35)
+        // An unlocked indicator fades once focus has settled; a locked one
+        // stays until released.
+        guard focusIndicator?.locked == false else { return }
+        focusFadeTask?.cancel()
+        focusFadeTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, focusIndicator?.locked == false else { return }
+            withAnimation { focusIndicator = nil }
+        }
     }
 
     private func focusIndicatorView(_ indicator: FocusIndicator) -> some View {
@@ -678,7 +704,7 @@ struct PrompterView: View {
     private var hintsOverlay: some View {
         VStack(alignment: .leading, spacing: 18) {
             hintRow(icon: "hand.tap", text: "Tap anywhere to show or hide the controls")
-            hintRow(icon: "viewfinder", text: "Tap the preview to focus and meter there — long-press to lock focus and exposure")
+            hintRow(icon: "viewfinder", text: "Press and hold the preview to focus there — keep holding to lock focus and exposure")
             hintRow(icon: "arrow.up.and.down", text: "Drag the script to move through it")
             hintRow(icon: "arrow.up.left.and.arrow.down.right", text: "Pinch to resize the text")
 

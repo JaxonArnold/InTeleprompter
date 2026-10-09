@@ -156,7 +156,7 @@ private struct ScriptRow: View {
                 Text(script.title.isEmpty ? "Untitled" : script.title)
                     .font(.headline)
                     .lineLimit(1)
-                Text(script.body.isEmpty ? "Empty script" : script.body)
+                Text(script.body.isEmpty ? "Empty script" : ScriptFormatter.parse(script.body).text)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

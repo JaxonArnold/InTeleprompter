@@ -34,6 +34,9 @@ enum SampleScripts {
         This script is a quick tour of script formatting. Open it in the \
         prompter to see it rendered, then steal whatever's useful.
 
+        To format, select some words and tap Format in the menu that pops \
+        up, or use the bold, italic, and color buttons above the keyboard.
+
         **Bold** pops on camera. Use it for the words you want to land. \
         *Italic* is softer, good for asides and whispers.
 

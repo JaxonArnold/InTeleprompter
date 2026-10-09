@@ -7,7 +7,8 @@ struct ScriptEditorView: View {
     @State private var draft: Script
     @State private var pendingUpdate: Task<Void, Never>?
     @Binding var presentingScript: Script?
-    @FocusState private var bodyFocused: Bool
+    @FocusState private var titleFocused: Bool
+    @State private var bodyFocused = false
 
     init(script: Script, presentingScript: Binding<Script?>) {
         _draft = State(initialValue: script)
@@ -17,6 +18,7 @@ struct ScriptEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             TextField("Title", text: $draft.title)
+                .focused($titleFocused)
                 .font(.title2.weight(.bold))
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -26,12 +28,7 @@ struct ScriptEditorView: View {
             Divider()
                 .padding(.top, 12)
 
-            TextEditor(text: $draft.body)
-                .focused($bodyFocused)
-                .font(.body)
-                .lineSpacing(5)
-                .padding(.horizontal, 14)
-                .scrollContentBackground(.hidden)
+            ScriptBodyEditor(markup: $draft.body, isFocused: $bodyFocused)
                 .overlay(alignment: .topLeading) {
                     if draft.body.isEmpty {
                         Text("Write or paste your script here…")
@@ -52,10 +49,13 @@ struct ScriptEditorView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            ToolbarItem(placement: .keyboard) {
-                HStack {
-                    Spacer()
-                    Button("Done") { bodyFocused = false }
+            // The body editor has its own format bar with a Done button.
+            if titleFocused {
+                ToolbarItem(placement: .keyboard) {
+                    HStack {
+                        Spacer()
+                        Button("Done") { titleFocused = false }
+                    }
                 }
             }
         }

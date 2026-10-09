@@ -9,7 +9,7 @@ Point the front camera at yourself, present a script over the live preview, and 
 **Prompter**
 - Script overlays a live camera preview, with a reading guide line and edge fades
 - Optional rule-of-thirds framing grid
-- Tap-to-focus with continuous metering; long-press for a hard AE/AF lock, with exposure compensation in prompter settings
+- Press-and-hold to focus with continuous metering; keep holding for a hard AE/AF lock, with exposure compensation in prompter settings (a quick tap always just toggles the controls)
 - Voice tracking: on-device speech recognition follows you through the script word by word
 - Words dim as they're read, so you always know where the tracker thinks you are
 - Manual mode with adjustable speed, drag to scrub, pinch to resize text
@@ -26,7 +26,8 @@ Point the front camera at yourself, present a script over the live preview, and 
 
 **Scripts**
 - Simple script library with editor, word counts, and estimated read times
-- Inline formatting: **bold**, *italic*, [red]color[/red] highlights, and SPEAKER: cues — auto-colored per name and skipped by voice tracking
+- Formatting you can see while you write: select words and choose bold, italic, or one of seven colors from the edit menu or the bar above the keyboard. SPEAKER: cues are auto-colored per name and skipped by voice tracking
+- Scripts are stored as lightweight markup (`**bold**`, `*italic*`, `[red]color[/red]`), so imported text using that markup comes in formatted
 - Import from Files (PDF, Word .docx, RTF, Markdown, plain text) or paste from the clipboard
 - Share sheet extension: send text or files straight from Notes, Safari, Mail, and Google Docs (Share & export → Send a copy → Word/.docx)
 - Stored locally, encrypted at rest
