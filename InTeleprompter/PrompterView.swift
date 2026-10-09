@@ -110,16 +110,20 @@ struct PrompterView: View {
                                       device: camera.activeVideoDevice,
                                       layerBox: previewLayerBox)
                         .ignoresSafeArea()
+                        // Attached here (not the ZStack) so coordinates match
+                        // the preview layer. The hold gesture claims touches
+                        // on the preview, so the ZStack's tap never sees them;
+                        // a quick tap here toggles the controls itself — the
+                        // tap people use to find the stop button mid-take.
+                        .gesture(holdFocusGesture)
+                        .simultaneousGesture(TapGesture().onEnded { handleScreenTap() })
+                        // Above the gestures, so tapping the lock badge only
+                        // unlocks.
                         .overlay {
                             if let focusIndicator {
                                 focusIndicatorView(focusIndicator)
                             }
                         }
-                        // Focus is press-and-hold only, so a quick tap falls
-                        // through to the controls toggle — the tap people use
-                        // to find the stop button mid-take. Attached here (not
-                        // the ZStack) so coordinates match the preview layer.
-                        .gesture(holdFocusGesture)
                 }
 
                 PrompterScriptPanel(
@@ -182,14 +186,7 @@ struct PrompterView: View {
                 }
             }
             .contentShape(Rectangle())
-            .onTapGesture {
-                guard !holdFocusFired, Date() >= tapSuppressedUntil else { return }
-                if showHints {
-                    dismissHints()
-                } else {
-                    withAnimation { controlsVisible.toggle() }
-                }
-            }
+            .onTapGesture { handleScreenTap() }
             .onChange(of: geo.size) { _, _ in
                 // The indicator's position is meaningless after relayout.
                 focusIndicator = nil
@@ -391,6 +388,17 @@ struct PrompterView: View {
 
     // MARK: - Focus & exposure control
 
+    /// A tap anywhere that isn't a control: dismiss the hints, or show/hide
+    /// the controls.
+    private func handleScreenTap() {
+        guard !holdFocusFired, Date() >= tapSuppressedUntil else { return }
+        if showHints {
+            dismissHints()
+        } else {
+            withAnimation { controlsVisible.toggle() }
+        }
+    }
+
     /// How long to hold the preview before focus/metering moves there.
     private static let holdToFocusDuration = 0.35
     /// Further hold, after focusing, that escalates to a hard AE/AF lock.
@@ -461,35 +469,42 @@ struct PrompterView: View {
     }
 
     private func focusIndicatorView(_ indicator: FocusIndicator) -> some View {
-        // When locked the badge is a button: tapping it releases the lock.
-        // Unlocked it's display-only, so taps fall through to the preview.
-        Button {
-            guard indicator.locked else { return }
-            focusIndicator = nil
-            camera.resetFocusAndExposure()
-        } label: {
-            VStack(spacing: 4) {
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(indicator.locked ? Color.orange : Color.yellow,
-                                  lineWidth: 2)
-                    .frame(width: 76, height: 76)
-                if indicator.locked {
+        // Only the lock badge is a button (it releases the lock). The box is
+        // display-only, so taps on it toggle the controls like anywhere else
+        // — a stray tap mid-take mustn't unlock and shift the exposure.
+        // The badge's taller hit area overlaps the spacing; the visible gap
+        // stays 4pt.
+        VStack(spacing: -4) {
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(indicator.locked ? Color.orange : Color.yellow, lineWidth: 2)
+                .frame(width: 76, height: 76)
+                .accessibilityElement()
+                .accessibilityLabel("Focus point")
+                .allowsHitTesting(false)
+            if indicator.locked {
+                Button {
+                    focusIndicator = nil
+                    camera.resetFocusAndExposure()
+                } label: {
                     Label("AE/AF", systemImage: "lock.fill")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.orange)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                         .background(.black.opacity(0.55), in: Capsule())
+                        // A taller hit area than the small capsule shows.
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Focus and exposure locked — tap to unlock")
             }
         }
-        .buttonStyle(.plain)
-        .allowsHitTesting(indicator.locked)
+        // Sized to the box alone, so the box stays centered on the point
+        // and the badge hangs below it.
+        .frame(height: 76, alignment: .top)
         .position(indicator.point)
         .transition(.scale(scale: 1.4).combined(with: .opacity))
-        .accessibilityLabel(indicator.locked
-                            ? "Focus and exposure locked — tap to unlock"
-                            : "Focus point")
     }
 
     // MARK: - Top bar
