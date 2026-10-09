@@ -5,7 +5,7 @@ import Speech
 
 // MARK: - Script tokenization
 
-struct ScriptWord {
+nonisolated struct ScriptWord {
     /// The word as written in the script.
     let text: String
     /// Lowercased, letters and digits only — the form used for matching.
@@ -14,7 +14,7 @@ struct ScriptWord {
     let range: NSRange
 }
 
-enum ScriptTokenizer {
+nonisolated enum ScriptTokenizer {
     static func words(in text: String) -> [ScriptWord] {
         var words: [ScriptWord] = []
         text.enumerateSubstrings(in: text.startIndex..., options: [.byWords, .localized]) { substring, range, _, _ in
@@ -314,9 +314,10 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
         // Backward: after going quiet, speakers usually back up and re-read
         // the few words just before where they stopped. Re-anchor behind the
         // current position on two consecutive matches.
-        if lost, let previous {
-            let start = max(1, currentWordIndex - 10)
-            for index in (start..<currentWordIndex).reversed()
+        // (Re-anchoring needs a word pair behind the current position, so
+        // there's nothing to search before the second script word.)
+        if lost, let previous, currentWordIndex > 1 {
+            for index in (max(1, currentWordIndex - 10)..<currentWordIndex).reversed()
             where Self.matches(spoken, words[index].normalized)
                 && Self.matches(previous, words[index - 1].normalized) {
                 advance(to: index)
@@ -331,7 +332,7 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
         status = .tracking
     }
 
-    private static func matches(_ spoken: String, _ script: String) -> Bool {
+    nonisolated static func matches(_ spoken: String, _ script: String) -> Bool {
         if spoken == script { return true }
         let length = max(spoken.count, script.count)
         guard min(spoken.count, script.count) >= 3, length >= 4 else { return false }
@@ -339,7 +340,7 @@ final class SpeechScriptTracker: NSObject, ObservableObject {
         return editDistance(spoken, script, limit: limit) <= limit
     }
 
-    private static func editDistance(_ a: String, _ b: String, limit: Int) -> Int {
+    nonisolated private static func editDistance(_ a: String, _ b: String, limit: Int) -> Int {
         let a = Array(a.unicodeScalars)
         let b = Array(b.unicodeScalars)
         if abs(a.count - b.count) > limit { return limit + 1 }

@@ -23,7 +23,8 @@ Point the front camera at yourself, present a script over the live preview, and 
 
 **Recording**
 - Up to 4K at 60 fps, HEVC, with selectable quality tiers (4K/1080p × 60/30)
-- Saved straight to your Photos library, plus instant in-app review of the last take
+- Saved straight to your Photos library
+- Quick editor for the last take: trims dead air at the start and end, shortens long pauses, and cuts filler words ("um", "uh", off-script "like"), with a live preview, a timeline, and per-cut review. Edits save to Photos as a new video; the original is kept
 - Interruption-safe: phone calls, backgrounding, and camera conflicts finish and save the take instead of losing it
 - Storage checks before recording and thermal-aware quality capping on hot devices
 

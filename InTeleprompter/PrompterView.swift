@@ -298,7 +298,7 @@ struct PrompterView: View {
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(item: $reviewTake) { take in
-            TakeReviewView(take: take)
+            TakeEditorView(take: take, scriptWords: tracker.words.map(\.normalized))
         }
         .alert("Allow Remote Control?",
                isPresented: Binding(

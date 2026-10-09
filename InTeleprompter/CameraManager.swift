@@ -136,9 +136,10 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Request permissions, configure for maximum quality, and start the session.
     func start() {
-        Task {
+        Task { [weak self] in
             let cameraOK = await Self.requestAccess(for: .video)
             let micOK = await Self.requestAccess(for: .audio)
+            guard let self else { return }
             guard cameraOK, micOK else {
                 await MainActor.run { self.permissionDenied = true }
                 return
@@ -652,7 +653,7 @@ final class CameraManager: NSObject, ObservableObject {
                 // mid-take thermal cap) now that the take is finished.
                 if self.thermalWarning || self.needsReconfigure {
                     self.needsReconfigure = false
-                    self.sessionQueue.async { [weak self] in self?.configureSession() }
+                    self.sessionQueue.async { self.configureSession() }
                 }
             }
 

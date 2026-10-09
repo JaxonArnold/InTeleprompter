@@ -1,0 +1,10 @@
+// The app's version, shared by the app and its share extension (the App
+// Store requires them to match).
+//
+// Both numbers go up automatically after every successful Archive, so they're
+// always what the next archive will use. To change them by hand, edit here —
+// not in a target's General tab, which writes a separate per-target value and
+// unlinks the two.
+
+MARKETING_VERSION = 1.2
+CURRENT_PROJECT_VERSION = 3

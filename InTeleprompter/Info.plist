@@ -2,7 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Lets the share extension offer "Open InTeleprompter" after an import. -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -14,12 +13,9 @@
 			</array>
 		</dict>
 	</array>
-	<!-- MultipeerConnectivity (second-device remote). -->
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_inteleprompter._tcp</string>
 	</array>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>We use the local network to let a second iPhone or iPad control this prompter.</string>
 </dict>
 </plist>

@@ -105,6 +105,20 @@ struct SpeechScriptTrackerTests {
         #expect(tracker.currentWordIndex == 9)
     }
 
+    /// Regression: going off script before the first word matched — at the
+    /// start of a take, or right after rewinding — crashed the app.
+    @Test func offScriptSpeechBeforeTheFirstWordIsIgnored() {
+        let tracker = makeTracker()
+        say(tracker, ["okay", "um", "so", "we're", "rolling"])
+        #expect(tracker.currentWordIndex == 0)
+        say(tracker, ["welcome", "back"])
+        #expect(tracker.currentWordIndex == 2)
+
+        tracker.seek(to: 0)   // rewind
+        say(tracker, ["hang", "on", "one", "more", "time"])
+        #expect(tracker.currentWordIndex == 0)
+    }
+
     @Test func resumesAtTheExactStopWordAfterSilence() {
         let tracker = makeTracker()
         say(tracker, ["welcome", "back", "to", "the", "show"])
