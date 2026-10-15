@@ -6,6 +6,7 @@ struct PrompterSettingsView: View {
     /// The live camera, for exposure compensation (a hardware setting, not
     /// a persisted preference).
     @ObservedObject var camera: CameraManager
+    @ObservedObject var microphones: MicrophoneManager
 
     @AppStorage("scrollSpeed") private var scrollSpeed = 60.0
     @AppStorage("fontSize") private var fontSize = 34.0
@@ -69,6 +70,37 @@ struct PrompterSettingsView: View {
                 } footer: {
                     Text("Exposure compensation brightens or darkens the image. It has no effect while focus and exposure are locked (keep holding the preview after it focuses to lock).")
                 }
+
+                Section {
+                    if microphones.microphones.isEmpty {
+                        Text("No microphones available")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Microphone", selection: Binding(
+                            get: { microphones.currentID ?? "" },
+                            set: { microphones.select($0) }
+                        )) {
+                            ForEach(microphones.microphones) { microphone in
+                                Label(microphone.name, systemImage: microphone.symbol)
+                                    .tag(microphone.id)
+                            }
+                        }
+                    }
+                    HStack {
+                        Text("Level")
+                        Spacer()
+                        AudioLevelMeterView(meter: camera.audioMeter)
+                            .environment(\.colorScheme, .dark)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.75), in: Capsule())
+                    }
+                } header: {
+                    Text("Audio")
+                } footer: {
+                    Text("Plug in a wired or USB-C mic and it shows up here. On iOS 26 and later, AirPods can record too. Talk at your normal volume: the meter should stay green or yellow, never red.")
+                }
+                .onAppear { microphones.refresh() }
 
                 Section {
                     Picker("Quality", selection: $recordingQuality) {

@@ -4,8 +4,8 @@ import Photos
 import SwiftUI
 
 /// Edits the last take: finds dead air, long pauses, and filler words,
-/// previews the result live, and saves it to Photos as a new video (the
-/// original stays as it was).
+/// captions it from the script, previews the result live, and saves it to
+/// Photos as a new video (the original stays as it was).
 @MainActor
 final class TakeEditorModel: ObservableObject {
     enum Status: Equatable {
@@ -25,8 +25,10 @@ final class TakeEditorModel: ObservableObject {
     let player = AVPlayer()
 
     @Published private(set) var status: Status = .analyzing
-    @Published private(set) var isFindingFillers = false
-    @Published private(set) var fillerNote: String?
+    /// Listening to the take, for filler words and captions.
+    @Published private(set) var isTranscribing = false
+    /// Why filler words and captions aren't available, when they aren't.
+    @Published private(set) var transcriptNote: String?
     @Published private(set) var cuts: [TakeCut] = []
     @Published private(set) var enabled: Set<Int> = []
     @Published private(set) var duration: Double = 0
@@ -34,19 +36,38 @@ final class TakeEditorModel: ObservableObject {
     /// Playback position in the original take, for the timeline.
     @Published private(set) var playhead: Double = 0
     @Published private(set) var saveState: SaveState = .idle
+    /// Caption lines for the current edit, in edited time.
+    @Published private(set) var captions: [CaptionCue] = []
+    /// The captions as a subtitle file, ready to share.
+    @Published private(set) var subtitlesFile: URL?
+    @Published var burnInCaptions = false {
+        didSet {
+            if burnInCaptions != oldValue, status == .ready { editChanged() }
+        }
+    }
 
-    private let scriptWords: [String]
+    private let script: [ScriptToken]
+    /// Caption words on the original take's timeline, once transcribed.
+    private var captionWords: [CaptionWord]?
     private var started = false
     private var rebuildTask: Task<Void, Never>?
     private var timeObserver: Any?
 
-    /// The last take's analysis and cut choices, so reopening is instant.
-    private static var remembered: (url: URL, duration: Double, cuts: [TakeCut],
-                                    enabled: Set<Int>, note: String?)?
+    /// The last take's analysis and choices, so reopening is instant.
+    private struct Remembered {
+        let url: URL
+        let duration: Double
+        let cuts: [TakeCut]
+        let enabled: Set<Int>
+        let note: String?
+        let captionWords: [CaptionWord]?
+        let burnInCaptions: Bool
+    }
+    private static var remembered: Remembered?
 
-    init(take: Take, scriptWords: [String]) {
+    init(take: Take, script: [ScriptToken]) {
         self.take = take
-        self.scriptWords = scriptWords
+        self.script = script
     }
 
     var editedDuration: Double {
@@ -54,6 +75,10 @@ final class TakeEditorModel: ObservableObject {
     }
 
     var hasChanges: Bool { duration - editedDuration > 0.05 }
+
+    var captionsAvailable: Bool { captionWords != nil }
+
+    var canSave: Bool { hasChanges || (burnInCaptions && !captions.isEmpty) }
 
     func cuts(of kind: TakeCut.Kind) -> [TakeCut] { cuts.filter { $0.kind == kind } }
 
@@ -63,14 +88,14 @@ final class TakeEditorModel: ObservableObject {
 
     func set(_ cut: TakeCut, on: Bool) {
         if on { enabled.insert(cut.id) } else { enabled.remove(cut.id) }
-        cutsChanged()
+        editChanged()
     }
 
     func set(_ kind: TakeCut.Kind, on: Bool) {
         for cut in cuts(of: kind) {
             if on { enabled.insert(cut.id) } else { enabled.remove(cut.id) }
         }
-        cutsChanged()
+        editChanged()
     }
 
     // MARK: Analysis
@@ -84,7 +109,9 @@ final class TakeEditorModel: ObservableObject {
             duration = saved.duration
             cuts = saved.cuts
             enabled = saved.enabled
-            fillerNote = saved.note
+            transcriptNote = saved.note
+            captionWords = saved.captionWords
+            burnInCaptions = saved.burnInCaptions
             status = .ready
             await rebuild()
             return
@@ -107,27 +134,31 @@ final class TakeEditorModel: ObservableObject {
             return
         }
 
-        // Pauses are quick to find; show them while listening for fillers.
+        // Pauses are quick to find; show them while listening to the take.
         cuts = TakeAnalyzer.silenceCuts(voiced: audio.voiced ?? [], duration: audio.duration)
         enabled = Set(cuts.map(\.id))
         status = .ready
         await rebuild()
 
-        isFindingFillers = true
-        let script = scriptWords
-        let search = await Task.detached(priority: .userInitiated) {
-            await TakeAnalyzer.findFillers(in: audio, script: script, firstID: 1_000)
+        isTranscribing = true
+        let script = script
+        let heard = await Task.detached(priority: .userInitiated) {
+            () -> (fillers: [TakeCut], captionWords: [CaptionWord]?, note: String?) in
+            let scriptWords = script.map(\.normalized)
+            switch await TakeAnalyzer.transcribeTake(audio, script: scriptWords) {
+            case .words(let words):
+                return (TakeAnalyzer.fillerCuts(words: words, voiced: audio.voiced, script: scriptWords, firstID: 1_000),
+                        TakeCaptions.captionWords(spoken: words, script: script), nil)
+            case .unavailable(let note):
+                return ([], nil, note)
+            }
         }.value
-        isFindingFillers = false
-        switch search {
-        case .found(let fillers):
-            cuts = (cuts + fillers).sorted { $0.start < $1.start }
-            enabled.formUnion(fillers.map(\.id))
-            cutsChanged()
-        case .unavailable(let note):
-            fillerNote = note
-            remember()
-        }
+        isTranscribing = false
+        transcriptNote = heard.note
+        captionWords = heard.captionWords
+        cuts = (cuts + heard.fillers).sorted { $0.start < $1.start }
+        enabled.formUnion(heard.fillers.map(\.id))
+        editChanged()
     }
 
     func stop() {
@@ -138,13 +169,15 @@ final class TakeEditorModel: ObservableObject {
     }
 
     private func remember() {
-        guard status == .ready, !isFindingFillers else { return }
-        Self.remembered = (take.url, duration, cuts, enabled, fillerNote)
+        guard status == .ready, !isTranscribing else { return }
+        Self.remembered = Remembered(url: take.url, duration: duration, cuts: cuts, enabled: enabled,
+                                     note: transcriptNote, captionWords: captionWords,
+                                     burnInCaptions: burnInCaptions)
     }
 
     // MARK: Preview
 
-    private func cutsChanged() {
+    private func editChanged() {
         if saveState != .idle, !isSaving { saveState = .idle }
         remember()
         rebuildTask?.cancel()
@@ -156,10 +189,11 @@ final class TakeEditorModel: ObservableObject {
         }
     }
 
-    /// Swaps in a composition of the current cuts, keeping the playhead on
+    /// Swaps in a composition of the current edit, keeping the playhead on
     /// the same moment of the take.
     private func rebuild() async {
         let newKept = TakeAnalyzer.keptRanges(duration: duration, cuts: cuts.filter(isOn))
+        let newCaptions = captionWords.map { TakeCaptions.cues(from: TakeCaptions.edited($0, kept: newKept)) } ?? []
         let wasPlaying = player.rate > 0
         let source = player.currentItem == nil
             ? 0 : TakeAnalyzer.sourceTime(forEditedTime: player.currentTime().seconds, kept: kept)
@@ -167,10 +201,30 @@ final class TakeEditorModel: ObservableObject {
               !Task.isCancelled else { return }
         let item = AVPlayerItem(asset: edit.composition)
         item.audioMix = edit.audioMix
+        if burnInCaptions {
+            item.videoComposition = try? await CaptionRenderer.videoComposition(for: edit.composition, cues: newCaptions)
+            guard !Task.isCancelled else { return }
+        }
         kept = newKept
+        updateCaptions(newCaptions)
         player.replaceCurrentItem(with: item)
         await seek(toEdited: TakeAnalyzer.editedTime(forSourceTime: source, kept: newKept))
         if wasPlaying { player.play() }
+    }
+
+    private func updateCaptions(_ cues: [CaptionCue]) {
+        captions = cues
+        guard !cues.isEmpty else {
+            subtitlesFile = nil
+            return
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("Captions.srt")
+        do {
+            try TakeCaptions.srt(cues).write(to: file, atomically: true, encoding: .utf8)
+            subtitlesFile = file
+        } catch {
+            subtitlesFile = nil
+        }
     }
 
     func seek(toSource time: Double) {
@@ -224,7 +278,10 @@ final class TakeEditorModel: ObservableObject {
 
         do {
             let edit = try await TakeComposer.composition(of: take.url, keeping: kept)
-            try await TakeComposer.export(edit.composition, audioMix: edit.audioMix, to: output) { [weak self] fraction in
+            let captionComposition = burnInCaptions
+                ? try await CaptionRenderer.videoComposition(for: edit.composition, cues: captions) : nil
+            try await TakeComposer.export(edit.composition, audioMix: edit.audioMix,
+                                          videoComposition: captionComposition, to: output) { [weak self] fraction in
                 guard let self, self.isSaving else { return }
                 self.saveState = .saving(fraction)
             }
@@ -250,8 +307,8 @@ struct TakeEditorView: View {
     @StateObject private var model: TakeEditorModel
     @Environment(\.dismiss) private var dismiss
 
-    init(take: Take, scriptWords: [String]) {
-        _model = StateObject(wrappedValue: TakeEditorModel(take: take, scriptWords: scriptWords))
+    init(take: Take, script: [ScriptToken]) {
+        _model = StateObject(wrappedValue: TakeEditorModel(take: take, script: script))
     }
 
     var body: some View {
@@ -329,13 +386,16 @@ struct TakeEditorView: View {
             ForEach(TakeCut.Kind.allCases, id: \.self) { kind in
                 if !model.cuts(of: kind).isEmpty { kindRow(kind) }
             }
-            if model.isFindingFillers {
-                progressRow("Listening for filler words…")
-            } else if model.cuts.isEmpty {
+            if model.isTranscribing {
+                progressRow("Listening for filler words and captions…")
+            } else if model.cuts.isEmpty, !model.captionsAvailable {
                 Text("Nothing to trim — this take is already tight.")
                     .foregroundStyle(.secondary)
             }
-            if let note = model.fillerNote {
+            if model.captionsAvailable {
+                captionsSection
+            }
+            if let note = model.transcriptNote {
                 Text(note)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -354,6 +414,33 @@ struct TakeEditorView: View {
             Text(message)
                 .font(.footnote)
                 .foregroundStyle(.red)
+        }
+    }
+
+    private var captionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $model.burnInCaptions) {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Burn in captions")
+                        Text(model.captions.isEmpty
+                             ? "No speech to caption"
+                             : model.captions.count == 1 ? "1 caption" : "\(model.captions.count) captions")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "captions.bubble")
+                        .foregroundStyle(.cyan)
+                }
+            }
+            .disabled(model.captions.isEmpty)
+            if let file = model.subtitlesFile {
+                ShareLink(item: file) {
+                    Label("Export subtitles (.srt)", systemImage: "square.and.arrow.up")
+                        .font(.subheadline)
+                }
+            }
         }
     }
 
@@ -441,7 +528,7 @@ struct TakeEditorView: View {
                     Label("Save to Photos", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!model.hasChanges)
+                .disabled(!model.canSave)
             }
         }
     }

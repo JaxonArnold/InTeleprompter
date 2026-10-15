@@ -462,7 +462,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "We use the local network to let a second iPhone or iPad control this prompter.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We use the microphone to record audio with your video.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Finished recordings are saved to your Photos library.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice as you read, and finds filler words to cut when you edit a take.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice as you read, and finds filler words and makes captions when you edit a take.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -502,7 +502,7 @@
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "We use the local network to let a second iPhone or iPad control this prompter.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We use the microphone to record audio with your video.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Finished recordings are saved to your Photos library.";
-				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice as you read, and finds filler words to cut when you edit a take.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Speech recognition lets the prompter follow your voice as you read, and finds filler words and makes captions when you edit a take.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

@@ -54,8 +54,21 @@ final class CameraManager: NSObject, ObservableObject {
 
     @Published var isRecording = false
     @Published var recordingSeconds = 0
-    @Published var isSessionRunning = false
+    @Published var isSessionRunning = false {
+        didSet {
+            guard isSessionRunning != oldValue else { return }
+            if isSessionRunning {
+                audioMeter.start { [weak self] in
+                    self?.audioOutput.connection(with: .audio)?.audioChannels ?? []
+                }
+            } else {
+                audioMeter.stop()
+            }
+        }
+    }
     @Published var permissionDenied = false
+    /// Live microphone level, for the prompter's meter.
+    let audioMeter = AudioLevelMeter()
     @Published var qualityLabel = ""
     @Published var saveMessage: String?
     @Published var cameraPosition: AVCaptureDevice.Position = .front
@@ -253,6 +266,11 @@ final class CameraManager: NSObject, ObservableObject {
 
     private func configureSession() {
         session.beginConfiguration()
+        if #available(iOS 26.0, *) {
+            // Lets AirPods record as a high-quality mic (offered in the
+            // microphone picker alongside wired and USB-C mics).
+            session.configuresApplicationAudioSessionForBluetoothHighQualityRecording = true
+        }
         let configured = configureSessionContent()
         session.commitConfiguration()
 
@@ -559,7 +577,10 @@ final class CameraManager: NSObject, ObservableObject {
         }
         // Lock this take's orientation to how the phone is held right now;
         // rotating mid-take keeps the file at its starting orientation.
-        let captureAngle = captureRotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+        let captureAngle = captureRotationCoordinator.map {
+            Self.recordingRotation(horizonAngle: $0.videoRotationAngleForHorizonLevelCapture,
+                                   framesRotatedBy: videoOutput.connection(with: .video)?.videoRotationAngle ?? 0)
+        } ?? 90
         isPreparingToRecord = true
         outputQueue.async { [weak self] in
             guard let self else { return }
@@ -611,6 +632,17 @@ final class CameraManager: NSObject, ObservableObject {
             }
         }
         return true
+    }
+
+    /// How much to rotate a take's frames for display. The rotation
+    /// coordinator measures from the camera sensor's own orientation, but
+    /// some cameras turn frames before delivering them: the square-sensor
+    /// front camera on iPhone 17 and later delivers them already turned 270°,
+    /// so they look like an older iPhone's sideways frames. Only the rest of
+    /// the turn is left to do.
+    nonisolated static func recordingRotation(horizonAngle: CGFloat, framesRotatedBy delivered: CGFloat) -> CGFloat {
+        let angle = (horizonAngle - delivered).truncatingRemainder(dividingBy: 360)
+        return angle < 0 ? angle + 360 : angle
     }
 
     func stopRecording() {

@@ -46,6 +46,7 @@ struct PrompterView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var camera = CameraManager()
     @StateObject private var remotes = RemoteControlService()
+    @StateObject private var microphones = MicrophoneManager()
     // Held in plain @State (not @StateObject/@ObservedObject): any @Published
     // change on an observed object invalidates the holding view, and these
     // two change at frame/word rate. Only the subviews that need the updates
@@ -226,6 +227,11 @@ struct PrompterView: View {
             if scrolling { startVoiceFollow() } else { tracker.pause() }
             publishRemoteState()
         }
+        .onChange(of: camera.isSessionRunning) { _, running in
+            // The capture session sets up the audio session as it starts;
+            // only then can the saved microphone be selected.
+            if running { microphones.applySavedChoice() }
+        }
         .onChange(of: camera.isRecording) { wasRecording, recording in
             // Recording can end without the stop button — interruption,
             // backgrounding, runtime error. Don't keep scrolling into a
@@ -294,11 +300,12 @@ struct PrompterView: View {
             publishRemoteState()
         }
         .sheet(isPresented: $showSettings) {
-            PrompterSettingsView(camera: camera)
+            PrompterSettingsView(camera: camera, microphones: microphones)
                 .presentationDetents([.medium, .large])
         }
         .fullScreenCover(item: $reviewTake) { take in
-            TakeEditorView(take: take, scriptWords: tracker.words.map(\.normalized))
+            TakeEditorView(take: take,
+                           script: TakeCaptions.scriptTokens(for: tracker.words, in: formattedScript.text))
         }
         .alert("Allow Remote Control?",
                isPresented: Binding(
@@ -509,6 +516,31 @@ struct PrompterView: View {
 
     // MARK: - Top bar
 
+    /// Recording time (or the capture quality) and the mic level.
+    private var topBarStatus: some View {
+        HStack(spacing: 10) {
+            if camera.isRecording {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 9, height: 9)
+                    Text(camera.recordingTimeText)
+                        .font(.system(.callout, design: .monospaced).weight(.semibold))
+                }
+            } else if !camera.qualityLabel.isEmpty {
+                Text(camera.qualityLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            if camera.isSessionRunning {
+                AudioLevelMeterView(meter: camera.audioMeter)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.black.opacity(0.55), in: Capsule())
+    }
+
     private var topBar: some View {
         HStack(spacing: 10) {
             CircleIconButton(systemName: "xmark") {
@@ -518,24 +550,8 @@ struct PrompterView: View {
 
             Spacer(minLength: 8)
 
-            if camera.isRecording {
-                HStack(spacing: 7) {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 9, height: 9)
-                    Text(camera.recordingTimeText)
-                        .font(.system(.callout, design: .monospaced).weight(.semibold))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.black.opacity(0.55), in: Capsule())
-            } else if !camera.qualityLabel.isEmpty {
-                Text(camera.qualityLabel)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(.black.opacity(0.55), in: Capsule())
-                    .foregroundStyle(.secondary)
+            if camera.isRecording || !camera.qualityLabel.isEmpty || camera.isSessionRunning {
+                topBarStatus
             }
 
             Spacer(minLength: 8)

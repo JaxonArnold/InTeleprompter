@@ -14,6 +14,7 @@ struct InTeleprompterApp: App {
 
     init() {
         CameraManager.purgeStaleTakes()
+        CrashReporter.shared.start()
     }
 
     var body: some Scene {

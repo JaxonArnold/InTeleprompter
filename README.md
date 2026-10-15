@@ -25,6 +25,8 @@ Point the front camera at yourself, present a script over the live preview, and 
 - Up to 4K at 60 fps, HEVC, with selectable quality tiers (4K/1080p × 60/30)
 - Saved straight to your Photos library
 - Quick editor for the last take: trims dead air at the start and end, shortens long pauses, and cuts filler words ("um", "uh", off-script "like"), with a live preview, a timeline, and per-cut review. Edits save to Photos as a new video; the original is kept
+- Captions written from your script, not a transcription: names and jargon are spelled the way you wrote them, timed to what you actually said. Burn them into the video or export a standard .srt subtitle file
+- Microphone picker (built-in, wired, USB-C, and AirPods on iOS 26+) with a live level meter on the prompter
 - Interruption-safe: phone calls, backgrounding, and camera conflicts finish and save the take instead of losing it
 - Storage checks before recording and thermal-aware quality capping on hot devices
 
@@ -41,6 +43,10 @@ Point the front camera at yourself, present a script over the live preview, and 
 Live transcription is fuzzy-matched against the script within a sliding window around the current position. Single words can only advance the position a few steps; larger jumps require consecutive-word evidence, so ad-libbing doesn't yank the script around. When you go quiet and come back, at the same spot, a few words earlier, or somewhere ahead, the matcher re-anchors within a word or two. A watchdog restarts the recognition task if it stalls during long sessions.
 
 Speech recognition runs on-device whenever the language supports it. The app makes no network calls of its own.
+
+## Crash reports
+
+The app collects crash reports through MetricKit, Apple's on-device diagnostics. After a crash, the next launch offers to share the report (technical details only, no scripts or videos); nothing is sent unless the user chooses to. Reports from users who share analytics with developers also appear in Xcode's Organizer under Crashes.
 
 ## Requirements
 

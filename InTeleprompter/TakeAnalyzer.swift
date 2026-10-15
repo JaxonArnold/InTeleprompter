@@ -23,6 +23,18 @@ nonisolated struct SpokenWord: Equatable, Sendable {
     let text: String
     let start: Double
     let end: Double
+    /// As the recognizer wrote it, for captions of words not in the script.
+    var display: String = ""
+
+    var shown: String { display.isEmpty ? text : display }
+}
+
+/// A stretch of recognized speech, in seconds from the start of the audio
+/// the recognizer was given.
+nonisolated struct RecognizedSegment: Equatable, Sendable {
+    let text: String
+    let start: Double
+    let duration: Double
 }
 
 /// A take's audio, decoded for analysis.
@@ -330,23 +342,24 @@ nonisolated enum TakeAnalyzer {
 
     // MARK: - Transcription
 
-    enum FillerSearch: Sendable {
-        case found([TakeCut])
+    enum Transcription: Sendable {
+        case words([SpokenWord])
         case unavailable(String)
     }
 
-    static func findFillers(in audio: TakeAudio, script: [String], firstID: Int) async -> FillerSearch {
+    /// What was said and when — the basis for filler cuts and captions.
+    static func transcribeTake(_ audio: TakeAudio, script: [String]) async -> Transcription {
         guard await authorizeSpeech() else {
-            return .unavailable("Allow speech recognition in Settings to find filler words.")
+            return .unavailable("Allow speech recognition in Settings to find filler words and make captions.")
         }
         guard let recognizer = SFSpeechRecognizer(locale: .current) ?? SFSpeechRecognizer(),
               recognizer.isAvailable else {
-            return .unavailable("Speech recognition isn't available right now, so filler words weren't checked.")
+            return .unavailable("Speech recognition isn't available right now, so filler words and captions aren't ready.")
         }
         guard let words = await transcribe(audio, with: recognizer, hints: hints(from: script)) else {
-            return .unavailable("Couldn't listen for filler words in this take.")
+            return .unavailable("Couldn't listen to this take, so filler words and captions aren't available.")
         }
-        return .found(fillerCuts(words: words, voiced: audio.voiced, script: script, firstID: firstID))
+        return .words(words)
     }
 
     private static func authorizeSpeech() async -> Bool {
@@ -424,49 +437,74 @@ nonisolated enum TakeAnalyzer {
             guard let segments = await recognize(request, with: recognizer) else { return nil }
             for segment in segments {
                 // A segment is normally one word; share its time if not.
-                let parts = segment.substring.split(whereSeparator: \.isWhitespace)
-                    .map { ScriptTokenizer.normalize(String($0)) }
-                    .filter { !$0.isEmpty }
+                let parts = segment.text.split(whereSeparator: \.isWhitespace)
+                    .map { (display: String($0), normalized: ScriptTokenizer.normalize(String($0))) }
+                    .filter { !$0.normalized.isEmpty }
                 guard !parts.isEmpty else { continue }
                 let share = segment.duration / Double(parts.count)
                 for (k, part) in parts.enumerated() {
-                    let start = chunk.lowerBound + segment.timestamp + share * Double(k)
-                    words.append(SpokenWord(text: part, start: start, end: start + share))
+                    let start = chunk.lowerBound + segment.start + share * Double(k)
+                    words.append(SpokenWord(text: part.normalized, start: start, end: start + share,
+                                            display: part.display))
                 }
             }
         }
         return words
     }
 
-    /// The final transcription, `[]` when there was no speech, nil on failure.
+    /// Everything recognized, `[]` when there was no speech, nil on failure.
     private static func recognize(_ request: SFSpeechAudioBufferRecognitionRequest,
-                                  with recognizer: SFSpeechRecognizer) async -> [SFTranscriptionSegment]? {
+                                  with recognizer: SFSpeechRecognizer) async -> [RecognizedSegment]? {
         await withCheckedContinuation { continuation in
             // The recognizer's callbacks and the timeout both run on the main
-            // queue, so the flag needs no lock.
-            final class Once { var done = false }
-            nonisolated(unsafe) let once = Once()
+            // queue, so this state needs no lock.
+            final class State {
+                var done = false
+                var heard: [RecognizedSegment] = []
+            }
+            nonisolated(unsafe) let state = State()
             recognizer.queue = .main
             nonisolated(unsafe) let task = recognizer.recognitionTask(with: request) { result, error in
-                guard !once.done else { return }
+                guard !state.done else { return }
+                // After each pause the recognizer reports the utterance it
+                // just finished on its own, and the final result holds only
+                // the last one — so every finished utterance is kept.
+                if let result, result.isFinal || result.speechRecognitionMetadata != nil {
+                    state.heard = merge(result.bestTranscription.segments.map {
+                        RecognizedSegment(text: $0.substring, start: $0.timestamp, duration: $0.duration)
+                    }, into: state.heard)
+                }
                 if let result, result.isFinal {
-                    once.done = true
-                    continuation.resume(returning: result.bestTranscription.segments)
+                    state.done = true
+                    continuation.resume(returning: state.heard)
                 } else if let error {
-                    once.done = true
+                    state.done = true
                     // 1110: no speech detected.
-                    continuation.resume(returning: (error as NSError).code == 1110 ? [] : nil)
+                    let noSpeech = (error as NSError).code == 1110
+                    continuation.resume(returning: noSpeech || !state.heard.isEmpty ? state.heard : nil)
                 }
             }
             // A stalled recognizer may never call back, not even after being
             // cancelled — give up rather than leave the editor waiting.
             DispatchQueue.main.asyncAfter(deadline: .now() + 90) {
-                guard !once.done else { return }
-                once.done = true
+                guard !state.done else { return }
+                state.done = true
                 task.cancel()
-                continuation.resume(returning: nil)
+                continuation.resume(returning: state.heard.isEmpty ? nil : state.heard)
             }
         }
+    }
+
+    /// Adds one recognition result to what's been heard so far. A result
+    /// normally covers a new utterance; if it revises words already heard,
+    /// it replaces them.
+    static func merge(_ result: [RecognizedSegment], into heard: [RecognizedSegment]) -> [RecognizedSegment] {
+        guard let first = result.first, let last = result.last else { return heard }
+        let tolerance = 0.05
+        let kept = heard.filter {
+            $0.start + $0.duration <= first.start + tolerance || $0.start >= last.start + last.duration - tolerance
+        }
+        return (kept + result).sorted { $0.start < $1.start }
     }
 
     // MARK: - Applying cuts
@@ -581,12 +619,14 @@ nonisolated enum TakeComposer {
     }
 
     /// Renders the edit to a movie file at the take's full quality.
-    static func export(_ composition: AVComposition, audioMix: AVAudioMix?, to url: URL,
+    static func export(_ composition: AVComposition, audioMix: AVAudioMix?,
+                       videoComposition: AVVideoComposition? = nil, to url: URL,
                        progress: @escaping @MainActor (Double) -> Void) async throws {
         guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHEVCHighestQuality)
             ?? AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality)
         else { throw CocoaError(.fileWriteUnknown) }
         session.audioMix = audioMix
+        session.videoComposition = videoComposition
 
         if #available(iOS 18, *) {
             try await withThrowingTaskGroup(of: Bool.self) { group in

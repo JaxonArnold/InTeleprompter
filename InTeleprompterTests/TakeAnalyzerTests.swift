@@ -167,6 +167,44 @@ struct EditTimelineTests {
 
 // MARK: - Real audio, end to end
 
+struct RecognitionMergeTests {
+    private func words(_ text: String, from start: Double) -> [RecognizedSegment] {
+        text.split(separator: " ").enumerated().map {
+            RecognizedSegment(text: String($1), start: start + Double($0) * 0.4, duration: 0.3)
+        }
+    }
+
+    /// On an iPhone 18 the recognizer reported each sentence after a pause
+    /// on its own; the final result held only the last one.
+    @Test func keepsEveryUtterance() {
+        var heard: [RecognizedSegment] = []
+        heard = TakeAnalyzer.merge(words("welcome back to the channel", from: 1), into: heard)
+        heard = TakeAnalyzer.merge(words("the first thing you need", from: 7), into: heard)
+        heard = TakeAnalyzer.merge(words("finally record a few takes", from: 20), into: heard)
+        #expect(heard.map(\.text).joined(separator: " ")
+                == "welcome back to the channel the first thing you need finally record a few takes")
+    }
+
+    @Test func aRevisedResultReplacesWhatItCovers() {
+        var heard = TakeAnalyzer.merge(words("welcome back to the channel", from: 1), into: [])
+        heard = TakeAnalyzer.merge(words("next set the camera", from: 7), into: heard)
+        // A recognizer that reports the whole transcript again, corrected.
+        heard = TakeAnalyzer.merge(words("welcome back to the channel", from: 1)
+                                   + words("next set the camera at eye level", from: 7), into: heard)
+        #expect(heard.map(\.text).joined(separator: " ")
+                == "welcome back to the channel next set the camera at eye level")
+        // A correction to the latest utterance alone keeps the earlier one.
+        heard = TakeAnalyzer.merge(words("next set your camera at eye level", from: 7), into: heard)
+        #expect(heard.map(\.text).joined(separator: " ")
+                == "welcome back to the channel next set your camera at eye level")
+    }
+
+    @Test func anEmptyResultChangesNothing() {
+        let heard = words("hello there", from: 0)
+        #expect(TakeAnalyzer.merge([], into: heard) == heard)
+    }
+}
+
 struct TakeAudioEndToEndTests {
 
     /// Writes a tone/silence pattern to an audio file.

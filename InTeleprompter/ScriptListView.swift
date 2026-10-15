@@ -1,3 +1,4 @@
+import MessageUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -8,6 +9,11 @@ struct ScriptListView: View {
     @State private var showImporter = false
     @State private var showRemote = false
     @State private var importError: ScriptImportError?
+    @StateObject private var crashReporter = CrashReporter.shared
+    @State private var crashReportToShare: URL?
+    /// Mail when it's set up; otherwise the share sheet, so the report can
+    /// go out through Gmail, Outlook, Messages, or Files.
+    private let canSendMail = MFMailComposeViewController.canSendMail()
 
     var body: some View {
         NavigationStack {
@@ -65,6 +71,33 @@ struct ScriptListView: View {
         }
         .sheet(isPresented: $showRemote) {
             RemoteControlView()
+        }
+        .alert("InTeleprompter Closed Unexpectedly",
+               isPresented: Binding(
+                   get: { crashReporter.unsentReport != nil },
+                   set: { if !$0 { crashReporter.markHandled() } }
+               )) {
+            Button("Send Report…") { crashReportToShare = crashReporter.unsentReport }
+            Button("Not Now", role: .cancel) {}
+        } message: {
+            Text(canSendMail
+                 ? "Sending the crash report to the developer helps get it fixed. It has technical details about the crash — none of your scripts or videos."
+                 : "Sending the crash report to \(CrashReporter.supportEmail) helps get it fixed. It has technical details about the crash — none of your scripts or videos.")
+        }
+        .sheet(isPresented: Binding(
+            get: { crashReportToShare != nil },
+            set: { if !$0 { crashReportToShare = nil } }
+        )) {
+            if let crashReportToShare {
+                if canSendMail {
+                    CrashReportMail(report: crashReportToShare) { self.crashReportToShare = nil }
+                        .ignoresSafeArea()
+                } else {
+                    ShareSheet(items: [crashReportToShare])
+                        .presentationDetents([.medium, .large])
+                        .ignoresSafeArea()
+                }
+            }
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: ScriptImporter.pickerContentTypes) { result in
